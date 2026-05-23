@@ -71,7 +71,7 @@ Ensure your host environment meets the following specifications before launching
 ### 1. Clone the Source
 Pull down the project repository and navigate into the root directory:
 ```bash
-git clone https://github.com
+git clone https://github.com/sendjainabhi/greenplum-ai-agent.git
 cd greenplum-ai-agent
 ```
 
@@ -105,6 +105,7 @@ mcp:
 ### 4. Run the Engine
 Compile dependencies and boot up the Spring Boot framework:
 ```bash
+mvn clean compile  
 mvn spring-boot:run
 ```
 
@@ -114,5 +115,5 @@ mvn spring-boot:run
 
 ### Log Inspection
 All query generations, tool invocations, and runtime execution graphs are piped to standard out and file appenders.
-* Navigate to the **log directory** generated automatically within the project root workspace.
+* Navigate to the **logs directory** generated automatically within the project root workspace.
 * Monitor live transactional queries, trace network requests, and review query optimization paths inside the output log streams.
