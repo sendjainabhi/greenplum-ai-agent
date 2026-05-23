@@ -1,5 +1,6 @@
 package com.example.agent;
 
+import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.ollama.OllamaChatModel;
@@ -9,7 +10,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
-import java.time.Duration; // <-- Don't forget this import!
+import java.time.Duration;
 
 @SpringBootApplication
 public class GreenplumAgentApplication {
@@ -22,21 +23,24 @@ public class GreenplumAgentApplication {
     public ChatLanguageModel chatLanguageModel(
             @Value("${ollama.server.url}") String ollamaUrl,
             @Value("${ollama.model.name}") String modelName,
-            @Value("${ollama.model.timeout-seconds:300}") long timeoutSeconds) { // Reads from YAML, defaults to 300 if missing
+            @Value("${ollama.model.timeout-seconds:300}") long timeoutSeconds) {
             
         return OllamaChatModel.builder()
                 .baseUrl(ollamaUrl)
-                .modelName(modelName) 
+                .modelName(modelName)
                 .temperature(0.0)
-                .timeout(Duration.ofSeconds(timeoutSeconds)) // <-- Tells Java to wait longer
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
     }
 
     @Bean
-    public GreenplumAgent greenplumAgent(ChatLanguageModel chatLanguageModel, GreenplumMcpTools mcpTools) {
+    public GreenplumAgent greenplumAgent(ChatLanguageModel model, GreenplumMcpTools mcpTools) {
+        // Define a provider factory to cleanly provision distinct memory caches per @MemoryId
+        ChatMemoryProvider memoryProvider = memoryId -> MessageWindowChatMemory.withMaxMessages(10);
+
         return AiServices.builder(GreenplumAgent.class)
-                .chatLanguageModel(chatLanguageModel)
-                .chatMemory(MessageWindowChatMemory.withMaxMessages(10))
+                .chatLanguageModel(model)
+                .chatMemoryProvider(memoryProvider) // FIXED: Swapped single instance for a structural Provider factory
                 .tools(mcpTools)
                 .build();
     }

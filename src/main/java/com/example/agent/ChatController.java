@@ -8,6 +8,7 @@ import java.util.Map;
 public class ChatController {
 
     private final GreenplumAgent agent;
+    private static final String SESSION_ID = "web-session-1"; // Tracks the continuous user session
 
     public ChatController(GreenplumAgent agent) {
         this.agent = agent;
@@ -16,7 +17,10 @@ public class ChatController {
     @PostMapping("/chat")
     public Map<String, String> chat(@RequestBody Map<String, String> request) {
         String prompt = request.get("prompt");
-        String response = agent.chat(prompt);
+        
+        // Pass the session ID along with the prompt
+        String response = agent.chat(SESSION_ID, prompt);
+        
         return Map.of("response", response);
     }
 }

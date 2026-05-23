@@ -10,7 +10,6 @@ ollama:
 
 mcp:
   server: 
-    url: http://10.85.69.214:80/mcp
-    auth-header: "Basic Z21fYWRtaW46Vk13YXJlMSE="
-    #username: gm_admin
-    #password: VMware1!
+    url: http://<mcp server url or ip>/mcp
+    auth-header: "Basic <gp mcp server auth header value>"
+

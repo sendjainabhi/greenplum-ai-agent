@@ -6,35 +6,103 @@
     <title>Greenplum AI Agent</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .chat-container { width: 100%; max-width: 900px; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 85vh; }
-        .header { background: #10b981; color: white; padding: 15px 20px; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 1.2em; }
-        .messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-        .message { padding: 12px 16px; border-radius: 8px; max-width: 85%; line-height: 1.5; overflow-wrap: break-word; }
-        .user-message { background: #e5e7eb; align-self: flex-end; }
-        .ai-message { background: #d1fae5; align-self: flex-start; }
+        /* Centralized Theme Palette using CSS Variables */
+        :root {
+            --primary-color: #0284c7;       /* Main header, buttons, table headers (Light Blue) */
+            --primary-hover: #0369a1;       /* Button hover state */
+            --ai-bubble-bg: #e0f2fe;        /* Soft background highlight for AI responses */
+            --inline-code-bg: #bae6fd;      /* Accent color for backtick code highlights */
+            --user-bubble-bg: #e5e7eb;     /* Neutral soft gray for user prompts */
+            --body-bg: #f3f4f6;            /* Overall layout background */
+            --text-color: #1f2937;         /* Dominant text color */
+        }
+
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            background-color: var(--body-bg); 
+            color: var(--text-color);
+            margin: 0; 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+        }
+
+        /* WIDESCREEN WORKSPACE: Optimized for large data visualization */
+        .chat-container { 
+            width: 95%; 
+            max-width: 1600px; 
+            background: white; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            display: flex; 
+            flex-direction: column; 
+            height: 88vh; 
+        }
+        
+        .header { 
+            background: var(--primary-color); 
+            color: white; 
+            padding: 15px 20px; 
+            border-radius: 8px 8px 0 0; 
+            font-weight: bold; 
+            font-size: 1.2em; 
+        }
+        
+        .messages { 
+            flex-grow: 1; 
+            padding: 20px; 
+            overflow-y: auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px; 
+        }
+        
+        .message { 
+            padding: 12px 16px; 
+            border-radius: 8px; 
+            max-width: 92%; /* Expanded bubble footprint for wider tables and code layout */
+            line-height: 1.5; 
+            overflow-wrap: break-word; 
+        }
+        
+        .user-message { background: var(--user-bubble-bg); align-self: flex-end; }
+        .ai-message { background: var(--ai-bubble-bg); align-self: flex-start; }
+        
         .input-area { padding: 15px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; }
         input[type="text"] { flex-grow: 1; padding: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 1em; }
-        button { background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 1em; font-weight: bold; }
-        button:hover { background: #059669; }
+        
+        button { 
+            background: var(--primary-color); 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 1em; 
+            font-weight: bold; 
+            transition: background 0.2s ease;
+        }
+        button:hover { background: var(--primary-hover); }
+        
         .loading { font-style: italic; color: #6b7280; font-size: 0.9em; display: none; margin-bottom: 10px; }
         
-        /* New CSS for beautifully formatted Tables */
+        /* Clean, enterprise-style structural layout for generated database markdown tables */
         table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.9em; background-color: white; }
         th, td { padding: 10px 12px; border: 1px solid #9ca3af; text-align: left; }
-        th { background-color: #10b981; color: white; font-weight: bold; }
+        th { background-color: var(--primary-color); color: white; font-weight: bold; }
         tr:nth-child(even) { background-color: #f9fafb; }
         
-        /* General Markdown styling */
+        /* Markdown Rendering Overrides */
         .ai-message p { margin-top: 0; }
-        .ai-message code { background: #bbf7d0; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
-        .ai-message pre code { display: block; padding: 10px; overflow-x: auto; }
+        .ai-message code { background: var(--inline-code-bg); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
+        .ai-message pre code { display: block; padding: 10px; overflow-x: auto; background: #1f2937; color: #f9fafb; border-radius: 4px; }
     </style>
 </head>
 <body>
 
 <div class="chat-container">
-    <div class="header">Greenplum AI Agent (Local Model)</div>
+    <div class="header">Greenplum AI Assistant</div>
     <div class="messages" id="messages">
         <div class="message ai-message">Hello! I am connected to your local model and Greenplum database. How can I help you today?</div>
     </div>
@@ -51,7 +119,7 @@
         const prompt = input.value.trim();
         if (!prompt) return;
 
-        // Render user message as raw text
+        // Render user message directly as plaintext
         addMessage(prompt, 'user-message', false);
         input.value = '';
         
@@ -66,7 +134,7 @@
             });
             const data = await response.json();
             
-            // Render AI message using Marked.js to parse Markdown into HTML
+            // Pass true to trigger Marked.js compilation for the backend AI response
             addMessage(data.response, 'ai-message', true);
         } catch (error) {
             addMessage('Error connecting to the agent backend.', 'ai-message', false);
@@ -81,13 +149,13 @@
         msgDiv.className = `message ${className}`;
         
         if (isMarkdown) {
-            msgDiv.innerHTML = marked.parse(text); // Converts Markdown tables/bolding to HTML
+            msgDiv.innerHTML = marked.parse(text); // Automatically maps parsed markdown into standard safe HTML tags
         } else {
             msgDiv.textContent = text;
         }
         
         messagesDiv.appendChild(msgDiv);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        messagesDiv.scrollTop = messagesDiv.scrollHeight; // Force automatic scroll tracking to stay stuck to bottom
     }
 </script>
 
