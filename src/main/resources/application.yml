@@ -10,6 +10,6 @@ ollama:
 
 mcp:
   server: 
-    url: http://<mcp server url or ip>/mcp
-    auth-header: "Basic <gp mcp server auth header value>"
+    url: http://xx.xx.xx.214:80/mcp
+    auth-header: "Basic Z21fYWRtaW4xxxxx"
 
