@@ -20,6 +20,7 @@ Behold the conversational interface in action across various diagnostic scenario
 | ![Dashboard](img/img1.jpeg) <br> *Figure 1: Main Application Hub* | ![Execution](img/img2.jpeg) <br> *Figure 2: MCP Tool Invocation* |
 | **🟦 Cluster Performance Logs** | **🟦 Query Results & Tables** |
 | ![Performance](img/img3.jpeg) <br> *Figure 3: System Optimization Insights* | ![Results](img/img4.jpeg) <br> *Figure 4: Secure Data Inspection View* |
+| ![Connectivity](img/img5.jpeg) <br> *Figure 5: Model and MCP server connectivity View*
 
 ---
 
