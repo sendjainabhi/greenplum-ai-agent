@@ -1,15 +1,15 @@
 server:
   port: 8080
 
-ollama:
-  server:
-    url: "http://localhost:11434"
-  model:
-    name: "qwen3:30b"
-    timeout-seconds: 360
+#ollama:
+  #server:
+   # url: "http://localhost:11434"
+  #model:
+   # name: "qwen3:30b"
+   # timeout-seconds: 360
 
-mcp:
-  server: 
-    url: http://xx.xx.xx.214:80/mcp
-    auth-header: "Basic Z21fYWRtaW4xxxxx"
+#mcp:
+ # server: 
+  #  url: http://xx.xx.69.214:80/mcp
+   # auth-header: "Basic Z21fYWRtaW4xxxxxx"
 

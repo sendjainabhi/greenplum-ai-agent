@@ -3,159 +3,250 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Greenplum AI Agent</title>
+    <title>Greenplum Analytics & Reporting</title>
+    
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <style>
-        /* Centralized Theme Palette using CSS Variables */
         :root {
-            --primary-color: #0284c7;       /* Main header, buttons, table headers (Light Blue) */
-            --primary-hover: #0369a1;       /* Button hover state */
-            --ai-bubble-bg: #e0f2fe;        /* Soft background highlight for AI responses */
-            --inline-code-bg: #bae6fd;      /* Accent color for backtick code highlights */
-            --user-bubble-bg: #e5e7eb;     /* Neutral soft gray for user prompts */
-            --body-bg: #f3f4f6;            /* Overall layout background */
-            --text-color: #1f2937;         /* Dominant text color */
+            --primary-color: #0284c7;       
+            --primary-hover: #0369a1;       
+            --ai-bubble-bg: #e0f2fe;        
+            --user-bubble-bg: #e5e7eb;     
+            --body-bg: #f3f4f6;            
+            --text-color: #1f2937;         
         }
 
-        body { 
-            font-family: system-ui, -apple-system, sans-serif; 
-            background-color: var(--body-bg); 
-            color: var(--text-color);
-            margin: 0; 
-            padding: 20px; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-        }
+        body { font-family: system-ui, -apple-system, sans-serif; background-color: var(--body-bg); color: var(--text-color); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .chat-container { width: 95%; max-width: 1600px; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 88vh; position: relative; }
 
-        /* WIDESCREEN WORKSPACE: Optimized for large data visualization */
-        .chat-container { 
-            width: 95%; 
-            max-width: 1600px; 
-            background: white; 
-            border-radius: 8px; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
-            display: flex; 
-            flex-direction: column; 
-            height: 88vh; 
-        }
-        
-        .header { 
-            background: var(--primary-color); 
-            color: white; 
-            padding: 15px 20px; 
-            border-radius: 8px 8px 0 0; 
-            font-weight: bold; 
-            font-size: 1.2em; 
-        }
-        
-        .messages { 
-            flex-grow: 1; 
-            padding: 20px; 
-            overflow-y: auto; 
-            display: flex; 
-            flex-direction: column; 
-            gap: 15px; 
-        }
-        
-        .message { 
-            padding: 12px 16px; 
-            border-radius: 8px; 
-            max-width: 92%; /* Expanded bubble footprint for wider tables and code layout */
-            line-height: 1.5; 
-            overflow-wrap: break-word; 
-        }
-        
-        .user-message { background: var(--user-bubble-bg); align-self: flex-end; }
-        .ai-message { background: var(--ai-bubble-bg); align-self: flex-start; }
-        
-        .input-area { padding: 15px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; }
-        input[type="text"] { flex-grow: 1; padding: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 1em; }
-        
-        button { 
-            background: var(--primary-color); 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 4px; 
-            cursor: pointer; 
-            font-size: 1em; 
-            font-weight: bold; 
-            transition: background 0.2s ease;
-        }
-        button:hover { background: var(--primary-hover); }
-        
-        .loading { font-style: italic; color: #6b7280; font-size: 0.9em; display: none; margin-bottom: 10px; }
-        
-        /* Clean, enterprise-style structural layout for generated database markdown tables */
-        table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.9em; background-color: white; }
+        .header { background: var(--primary-color); color: white; padding: 15px 20px; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 1.2em; display: flex; justify-content: space-between; align-items: center; }
+        .settings-btn { background: transparent; border: 1px solid rgba(255,255,255,0.6); color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
+        .settings-btn:hover { background: rgba(255,255,255,0.2); border-color: white; }
+
+        .messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message-wrapper { display: flex; flex-direction: column; gap: 5px; max-width: 92%; }
+        .wrapper-user { align-self: flex-end; }
+        .wrapper-ai { align-self: flex-start; width: 100%; }
+        .message { padding: 16px 20px; border-radius: 8px; line-height: 1.5; overflow-wrap: break-word; }
+        .user-message { background: var(--user-bubble-bg); }
+        .ai-message { background: var(--ai-bubble-bg); width: 100%; box-sizing: border-box; }
+
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 0.9em; background-color: white; }
         th, td { padding: 10px 12px; border: 1px solid #9ca3af; text-align: left; }
         th { background-color: var(--primary-color); color: white; font-weight: bold; }
         tr:nth-child(even) { background-color: #f9fafb; }
-        
-        /* Markdown Rendering Overrides */
-        .ai-message p { margin-top: 0; }
-        .ai-message code { background: var(--inline-code-bg); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
+        .chart-wrapper { background: white; border: 1px solid #cbd5e1; border-radius: 6px; padding: 15px; margin: 15px 0; width: 100%; max-width: 600px; height: 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .ai-message pre code { display: block; padding: 10px; overflow-x: auto; background: #1f2937; color: #f9fafb; border-radius: 4px; }
+
+        .input-area { padding: 15px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; }
+        .chat-input { flex-grow: 1; padding: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 1em; }
+        .send-btn { background: var(--primary-color); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 1em; font-weight: bold; transition: background 0.2s ease; }
+        .send-btn:hover { background: var(--primary-hover); }
+        
+        .loading-container { padding: 0 20px; }
+        .loading { font-style: italic; color: #6b7280; font-size: 0.9em; display: none; margin-bottom: 10px; }
+
+        /* Modal Overlay */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 25px; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .modal-content h3 { margin-top: 0; color: var(--primary-color); border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+        .form-group { margin-bottom: 15px; display: flex; flex-direction: column; gap: 5px; }
+        .form-group label { font-size: 0.85em; font-weight: bold; color: #475569; }
+        .form-group input { padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .btn-save { background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-cancel { background: #e5e7eb; color: #374151; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+
+        /* Disabled states */
+        .chat-input:disabled { background-color: #f3f4f6; cursor: not-allowed; color: #9ca3af; }
+        .send-btn:disabled { background-color: #9ca3af; cursor: not-allowed; }
     </style>
 </head>
 <body>
 
 <div class="chat-container">
-    <div class="header">Greenplum AI Assistant</div>
-    <div class="messages" id="messages">
-        <div class="message ai-message">Hello! I am connected to your local model and Greenplum database. How can I help you today?</div>
+    <div class="header">
+        <span>Greenplum AI Analytics Agent</span>
+        <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
     </div>
-    <div style="padding: 0 20px;"><span class="loading" id="loading">Agent is gathering data from Greenplum...</span></div>
+
+    <div class="messages" id="messages">
+        <div class="message-wrapper wrapper-ai">
+            <div class="message ai-message">Hello! I am ready to analyze your Greenplum database. How can I help you today?</div>
+        </div>
+    </div>
+    
+    <div class="loading-container">
+        <span class="loading" id="loading">Agent is processing request...</span>
+    </div>
+    
     <div class="input-area">
-        <input type="text" id="prompt" placeholder="Ask about your Greenplum data..." onkeypress="if(event.key === 'Enter') sendPrompt()">
-        <button onclick="sendPrompt()">Send</button>
+        <input type="text" id="prompt" class="chat-input" placeholder="Ask a database question..." onkeypress="if(event.key === 'Enter') sendPrompt()">
+        <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="settingsModal">
+    <div class="modal-content">
+        <h3>Agent Configuration</h3>
+        <div class="form-group">
+            <label>Ollama Server URL</label>
+            <input type="text" id="ollamaUrl" placeholder="http://localhost:11434">
+        </div>
+        <div class="form-group">
+            <label>LLM Model Name</label>
+            <input type="text" id="modelName" placeholder="qwen3:30b">
+        </div>
+        <div class="form-group">
+            <label>MCP Server URL</label>
+            <input type="text" id="mcpUrl" placeholder="http://10.85.69.214:80/mcp">
+        </div>
+        <div class="form-group">
+            <label>MCP Auth Header (Basic)</label>
+            <input type="password" id="mcpAuth" placeholder="Basic Z21fYWRtaW46Vk13YXJlMSE=">
+        </div>
+        <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+            <button class="btn-save" onclick="saveSettings()">Save & Close</button>
+        </div>
     </div>
 </div>
 
 <script>
+    // --- Settings Logic ---
+    function openSettings() {
+        document.getElementById('ollamaUrl').value = localStorage.getItem('gp_ollamaUrl') || 'http://localhost:11434';
+        document.getElementById('modelName').value = localStorage.getItem('gp_modelName') || 'qwen3:30b';
+        document.getElementById('mcpUrl').value = localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp';
+        document.getElementById('mcpAuth').value = localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE=';
+        
+        document.getElementById('settingsModal').style.display = 'flex';
+    }
+
+    function closeSettings() {
+        document.getElementById('settingsModal').style.display = 'none';
+    }
+
+    function saveSettings() {
+        localStorage.setItem('gp_ollamaUrl', document.getElementById('ollamaUrl').value.trim());
+        localStorage.setItem('gp_modelName', document.getElementById('modelName').value.trim());
+        localStorage.setItem('gp_mcpUrl', document.getElementById('mcpUrl').value.trim());
+        localStorage.setItem('gp_mcpAuth', document.getElementById('mcpAuth').value.trim());
+        closeSettings();
+    }
+
+    // --- Chat Logic ---
     async function sendPrompt() {
         const input = document.getElementById('prompt');
+        const sendBtn = document.getElementById('sendBtn');
         const prompt = input.value.trim();
         if (!prompt) return;
 
-        // Render user message directly as plaintext
         addMessage(prompt, 'user-message', false);
         input.value = '';
         
+        input.disabled = true;
+        sendBtn.disabled = true;
+        
         const loading = document.getElementById('loading');
         loading.style.display = 'block';
+        
+        const loadingPhases = [
+            "Analyzing database schemas via MCP...",
+            "Constructing secure SQL queries...",
+            "Retrieving data from Greenplum...",
+            "Formulating insights & charts..."
+        ];
+        let phaseIndex = 0;
+        loading.textContent = "Connecting to agent...";
+        
+        const loadingInterval = setInterval(() => {
+            loading.textContent = loadingPhases[phaseIndex % loadingPhases.length];
+            phaseIndex++;
+        }, 2000);
+
+        const payload = { 
+            prompt: prompt,
+            ollamaUrl: localStorage.getItem('gp_ollamaUrl') || 'http://localhost:11434',
+            modelName: localStorage.getItem('gp_modelName') || 'qwen3:30b',
+            mcpUrl: localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp',
+            mcpAuth: localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE='
+        };
 
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: prompt })
+                body: JSON.stringify(payload)
             });
             const data = await response.json();
-            
-            // Pass true to trigger Marked.js compilation for the backend AI response
             addMessage(data.response, 'ai-message', true);
         } catch (error) {
-            addMessage('Error connecting to the agent backend.', 'ai-message', false);
+            addMessage('Error connecting to backend API.', 'ai-message', false);
         } finally {
+            clearInterval(loadingInterval);
             loading.style.display = 'none';
+            input.disabled = false;
+            sendBtn.disabled = false;
+            input.focus(); 
         }
     }
 
+    // --- UI Rendering ---
     function addMessage(text, className, isMarkdown) {
         const messagesDiv = document.getElementById('messages');
+        const wrapperDiv = document.createElement('div');
+        wrapperDiv.className = `message-wrapper ${className === 'user-message' ? 'wrapper-user' : 'wrapper-ai'}`;
+        
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${className}`;
+        wrapperDiv.appendChild(msgDiv);
         
         if (isMarkdown) {
-            msgDiv.innerHTML = marked.parse(text); // Automatically maps parsed markdown into standard safe HTML tags
+            let processedText = text;
+            const chartCaches = [];
+            const chartRegex = /```chart\s*([\s\S]*?)\s*```/g;
+            let match;
+            
+            while ((match = chartRegex.exec(text)) !== null) {
+                const uniqueChartId = 'graph-canvas-' + Math.random().toString(36).substring(2, 9);
+                chartCaches.push({ id: uniqueChartId, jsonConfig: match[1].trim() });
+                processedText = processedText.replace(match[0], `<div class="chart-wrapper"><canvas id="${uniqueChartId}"></canvas></div>`);
+            }
+            
+            msgDiv.innerHTML = marked.parse(processedText);
+            messagesDiv.appendChild(wrapperDiv);
+            
+            chartCaches.forEach(chartObj => setTimeout(() => constructSimpleGraph(chartObj.id, chartObj.jsonConfig), 50));
         } else {
             msgDiv.textContent = text;
+            messagesDiv.appendChild(wrapperDiv);
         }
         
-        messagesDiv.appendChild(msgDiv);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight; // Force automatic scroll tracking to stay stuck to bottom
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function constructSimpleGraph(canvasId, jsonConfigString) {
+        try {
+            const parsedConfig = JSON.parse(jsonConfigString);
+            const canvasCtx = document.getElementById(canvasId).getContext('2d');
+            const colorPalette = ['#0284c7', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6'];
+            
+            new Chart(canvasCtx, {
+                type: parsedConfig.type || 'bar',
+                data: {
+                    labels: parsedConfig.labels,
+                    datasets: parsedConfig.datasets.map((dataset, idx) => ({
+                        ...dataset,
+                        backgroundColor: colorPalette[idx % colorPalette.length],
+                        borderWidth: 1
+                    }))
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        } catch (err) { console.error("Graph rendering failed: ", err); }
     }
 </script>
 
