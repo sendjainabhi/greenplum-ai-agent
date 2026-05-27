@@ -25,6 +25,15 @@
         .settings-btn { background: transparent; border: 1px solid rgba(255,255,255,0.6); color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
         .settings-btn:hover { background: rgba(255,255,255,0.2); border-color: white; }
 
+        /* NEW: Status Indicator Styles */
+        .status-container { display: flex; align-items: center; gap: 10px; font-size: 0.75em; font-weight: normal; background: rgba(0,0,0,0.15); padding: 4px 10px; border-radius: 20px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; transition: background-color 0.3s; }
+        .status-online { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-offline { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .status-testing { background-color: #f59e0b; animation: pulse 1.5s infinite; }
+        .status-unknown { background-color: #9ca3af; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+
         .messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
         .message-wrapper { display: flex; flex-direction: column; gap: 5px; max-width: 92%; }
         .wrapper-user { align-self: flex-end; }
@@ -50,16 +59,25 @@
 
         /* Modal Overlay */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
-        .modal-content { background: white; padding: 25px; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
-        .modal-content h3 { margin-top: 0; color: var(--primary-color); border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+        .modal-content { background: white; padding: 25px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; }
+        .modal-content h3 { margin-top: 0; color: var(--primary-color); border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 20px; }
+        
         .form-group { margin-bottom: 15px; display: flex; flex-direction: column; gap: 5px; }
         .form-group label { font-size: 0.85em; font-weight: bold; color: #475569; }
-        .form-group input { padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .form-group input, .form-group select { padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+        .help-text { font-size: 0.75em; color: #64748b; margin-top: -3px; }
+        
+        .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 20px; }
         .btn-save { background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
         .btn-cancel { background: #e5e7eb; color: #374151; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        
+        .btn-test { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: auto; }
+        .btn-test:hover { background: #059669; }
+        .btn-test:disabled { background: #9ca3af; cursor: not-allowed; }
+        .test-result { font-size: 0.85em; margin-top: 15px; font-weight: bold; padding: 10px; border-radius: 4px; display: none; }
+        .test-success { background: #d1fae5; color: #065f46; display: block; }
+        .test-error { background: #fee2e2; color: #991b1b; display: block; }
 
-        /* Disabled states */
         .chat-input:disabled { background-color: #f3f4f6; cursor: not-allowed; color: #9ca3af; }
         .send-btn:disabled { background-color: #9ca3af; cursor: not-allowed; }
     </style>
@@ -68,7 +86,13 @@
 
 <div class="chat-container">
     <div class="header">
-        <span>Greenplum AI Analytics Agent</span>
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <span>Greenplum AI Analytics Agent</span>
+            <div class="status-container">
+                <span id="headerStatusDot" class="status-dot status-unknown"></span>
+                <span id="headerStatusText">Not Tested</span>
+            </div>
+        </div>
         <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
     </div>
 
@@ -91,23 +115,52 @@
 <div class="modal-overlay" id="settingsModal">
     <div class="modal-content">
         <h3>Agent Configuration</h3>
+        
         <div class="form-group">
-            <label>Ollama Server URL</label>
-            <input type="text" id="ollamaUrl" placeholder="http://localhost:11434">
+            <label>AI Provider</label>
+            <select id="provider" onchange="toggleProviderFields()">
+                <option value="ollama">Ollama (Local)</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+            <div class="help-text">Select your preferred AI backend.</div>
         </div>
+
+        <div class="form-group" id="baseUrlGroup">
+            <label id="baseUrlLabel">Server Base URL</label>
+            <input type="text" id="baseUrl">
+            <div class="help-text" id="baseUrlHelp">Format: http://localhost:11434</div>
+        </div>
+        
+        <div class="form-group" id="apiKeyGroup" style="display: none;">
+            <label>API Key</label>
+            <input type="password" id="apiKey" placeholder="Enter API Key">
+            <div class="help-text" id="apiKeyHelp">Secure token.</div>
+        </div>
+
         <div class="form-group">
-            <label>LLM Model Name</label>
-            <input type="text" id="modelName" placeholder="qwen3:30b">
+            <label>Model Name</label>
+            <input type="text" id="modelName">
+            <div class="help-text" id="modelNameHelp">Examples: qwen3:30b, llama3</div>
         </div>
+
+        <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+
         <div class="form-group">
             <label>MCP Server URL</label>
             <input type="text" id="mcpUrl" placeholder="http://10.85.69.214:80/mcp">
+            <div class="help-text">Format: http://&lt;ip&gt;:&lt;port&gt;/mcp</div>
         </div>
         <div class="form-group">
             <label>MCP Auth Header (Basic)</label>
             <input type="password" id="mcpAuth" placeholder="Basic Z21fYWRtaW46Vk13YXJlMSE=">
+            <div class="help-text">Format: Basic &lt;base64_encoded_credentials&gt;</div>
         </div>
+        
+        <div id="testResult" class="test-result"></div>
+
         <div class="modal-actions">
+            <button class="btn-test" id="testBtn" onclick="testConnection()">Test Connection</button>
             <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
             <button class="btn-save" onclick="saveSettings()">Save & Close</button>
         </div>
@@ -115,13 +168,78 @@
 </div>
 
 <script>
-    // --- Settings Logic ---
+    // --- Header Status Logic ---
+    function updateHeaderStatus(state) {
+        const dot = document.getElementById('headerStatusDot');
+        const text = document.getElementById('headerStatusText');
+        
+        // Reset classes
+        dot.className = 'status-dot';
+        
+        if (state === 'testing') {
+            dot.classList.add('status-testing');
+            text.textContent = 'Testing...';
+        } else if (state === 'online') {
+            dot.classList.add('status-online');
+            text.textContent = 'System Online';
+        } else if (state === 'offline') {
+            dot.classList.add('status-offline');
+            text.textContent = 'System Offline';
+        } else {
+            dot.classList.add('status-unknown');
+            text.textContent = 'Not Tested';
+        }
+    }
+
+    // --- Settings UI Logic ---
+    function toggleProviderFields() {
+        const provider = document.getElementById('provider').value;
+        const baseUrlLabel = document.getElementById('baseUrlLabel');
+        const baseUrlInput = document.getElementById('baseUrl');
+        const baseUrlHelp = document.getElementById('baseUrlHelp');
+        const apiKeyGroup = document.getElementById('apiKeyGroup');
+        const apiKeyHelp = document.getElementById('apiKeyHelp');
+        const modelNameInput = document.getElementById('modelName');
+        const modelNameHelp = document.getElementById('modelNameHelp');
+
+        if (provider === 'ollama') {
+            apiKeyGroup.style.display = 'none';
+            baseUrlLabel.textContent = 'Ollama Server URL';
+            baseUrlInput.placeholder = 'http://localhost:11434';
+            baseUrlHelp.textContent = 'Format: http://<host>:<port>';
+            modelNameInput.placeholder = 'e.g. qwen3:30b';
+            modelNameHelp.textContent = 'Examples: qwen3:30b, llama3, mistral';
+        } else if (provider === 'openai') {
+            apiKeyGroup.style.display = 'flex';
+            apiKeyHelp.textContent = 'Format: sk-...';
+            baseUrlLabel.textContent = 'OpenAI Base URL (Optional)';
+            baseUrlInput.placeholder = 'https://api.openai.com/v1';
+            baseUrlHelp.textContent = 'Use only for custom proxies. Leave blank for default.';
+            modelNameInput.placeholder = 'e.g. gpt-4o';
+            modelNameHelp.textContent = 'Examples: gpt-4o, gpt-4-turbo, gpt-3.5-turbo';
+        } else if (provider === 'anthropic') {
+            apiKeyGroup.style.display = 'flex';
+            apiKeyHelp.textContent = 'Format: sk-ant-...';
+            baseUrlLabel.textContent = 'Anthropic Base URL (Optional)';
+            baseUrlInput.placeholder = 'https://api.anthropic.com/v1';
+            baseUrlHelp.textContent = 'Use only for custom proxies. Leave blank for default.';
+            modelNameInput.placeholder = 'e.g. claude-3-5-sonnet-20241022';
+            modelNameHelp.textContent = 'Examples: claude-3-5-sonnet-20241022, claude-3-opus-20240229';
+        }
+    }
+
     function openSettings() {
-        document.getElementById('ollamaUrl').value = localStorage.getItem('gp_ollamaUrl') || 'http://localhost:11434';
+        document.getElementById('provider').value = localStorage.getItem('gp_provider') || 'ollama';
+        document.getElementById('baseUrl').value = localStorage.getItem('gp_baseUrl') || '';
+        document.getElementById('apiKey').value = localStorage.getItem('gp_apiKey') || '';
         document.getElementById('modelName').value = localStorage.getItem('gp_modelName') || 'qwen3:30b';
         document.getElementById('mcpUrl').value = localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp';
         document.getElementById('mcpAuth').value = localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE=';
         
+        document.getElementById('testResult').className = 'test-result';
+        document.getElementById('testResult').textContent = '';
+
+        toggleProviderFields();
         document.getElementById('settingsModal').style.display = 'flex';
     }
 
@@ -130,11 +248,60 @@
     }
 
     function saveSettings() {
-        localStorage.setItem('gp_ollamaUrl', document.getElementById('ollamaUrl').value.trim());
+        localStorage.setItem('gp_provider', document.getElementById('provider').value);
+        localStorage.setItem('gp_baseUrl', document.getElementById('baseUrl').value.trim());
+        localStorage.setItem('gp_apiKey', document.getElementById('apiKey').value.trim());
         localStorage.setItem('gp_modelName', document.getElementById('modelName').value.trim());
         localStorage.setItem('gp_mcpUrl', document.getElementById('mcpUrl').value.trim());
         localStorage.setItem('gp_mcpAuth', document.getElementById('mcpAuth').value.trim());
         closeSettings();
+    }
+
+    // --- Test Connection Logic ---
+    async function testConnection() {
+        const testBtn = document.getElementById('testBtn');
+        const resultDiv = document.getElementById('testResult');
+        
+        testBtn.disabled = true;
+        testBtn.textContent = 'Testing...';
+        updateHeaderStatus('testing');
+        
+        resultDiv.className = 'test-result';
+        resultDiv.textContent = 'Connecting to AI provider...';
+        resultDiv.style.display = 'block';
+
+        const payload = {
+            provider: document.getElementById('provider').value,
+            baseUrl: document.getElementById('baseUrl').value.trim(),
+            apiKey: document.getElementById('apiKey').value.trim(),
+            modelName: document.getElementById('modelName').value.trim()
+        };
+
+        try {
+            const response = await fetch('/api/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                resultDiv.textContent = '✅ ' + data.message;
+                resultDiv.className = 'test-result test-success';
+                updateHeaderStatus('online');
+            } else {
+                resultDiv.textContent = '❌ ' + data.message;
+                resultDiv.className = 'test-result test-error';
+                updateHeaderStatus('offline');
+            }
+        } catch (error) {
+            resultDiv.textContent = '❌ Network error: Could not reach Spring Boot backend.';
+            resultDiv.className = 'test-result test-error';
+            updateHeaderStatus('offline');
+        } finally {
+            testBtn.disabled = false;
+            testBtn.textContent = 'Test Connection';
+        }
     }
 
     // --- Chat Logic ---
@@ -149,6 +316,7 @@
         
         input.disabled = true;
         sendBtn.disabled = true;
+        updateHeaderStatus('testing');
         
         const loading = document.getElementById('loading');
         loading.style.display = 'block';
@@ -169,7 +337,9 @@
 
         const payload = { 
             prompt: prompt,
-            ollamaUrl: localStorage.getItem('gp_ollamaUrl') || 'http://localhost:11434',
+            provider: localStorage.getItem('gp_provider') || 'ollama',
+            baseUrl: localStorage.getItem('gp_baseUrl') || '',
+            apiKey: localStorage.getItem('gp_apiKey') || '',
             modelName: localStorage.getItem('gp_modelName') || 'qwen3:30b',
             mcpUrl: localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp',
             mcpAuth: localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE='
@@ -183,8 +353,10 @@
             });
             const data = await response.json();
             addMessage(data.response, 'ai-message', true);
+            updateHeaderStatus('online'); // Switch to Green on success
         } catch (error) {
             addMessage('Error connecting to backend API.', 'ai-message', false);
+            updateHeaderStatus('offline'); // Switch to Red on fail
         } finally {
             clearInterval(loadingInterval);
             loading.style.display = 'none';

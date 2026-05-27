@@ -1,6 +1,6 @@
 # Greenplum Database AI Agent
 
-An intelligent, secure, and tool-driven AI agent designed to interact with Greenplum database clusters using the Model Context Protocol (MCP) and localized Large Language Models (LLMs).
+An intelligent, secure, and tool-driven AI agent designed to interact with Greenplum database clusters using the Model Context Protocol (MCP) and dynamic, multi-provider Large Language Models (LLMs).
 
 > [!WARNING]
 > **CRITICAL NOTICE:** This project is strictly a Proof of Concept (PoC) and intended solely for experimental purposes. Do **NOT** deploy or run this application in a production environment. Use only in designated, non-production test environments.
@@ -11,10 +11,9 @@ An intelligent, secure, and tool-driven AI agent designed to interact with Green
 
 I am a specialized, read-only Greenplum Database AI assistant designed to help you analyze, diagnose, and optimize your Greenplum cluster. I operate strictly via Greenplum’s Model Context Protocol (MCP) tools to execute precise operations and provide actionable data insights.
 
-### 📸 User Interface & Demo Gallary
+### 📸 User Interface & Demo Gallery
 
 Behold the conversational interface in action across various diagnostic scenarios:
-
 
 | 🟦 Interface Dashboard | 🟦 Tool Execution Output |
 | :---: | :---: |
@@ -24,9 +23,7 @@ Behold the conversational interface in action across various diagnostic scenario
 
 ---
 
-### 🔧 Core Capabilities
-
-
+## 🔧 Core Capabilities
 
 | Capability | Tool Used | System Purpose |
 | :--- | :--- | :--- |
@@ -34,16 +31,21 @@ Behold the conversational interface in action across various diagnostic scenario
 | **Cluster Health Check** | `getClusterStatus` | Verifies active segment status, mirroring, and replication health. |
 | **Read-Only Queries** | `executeQuery` | Executes optimized `SELECT` statements without modifying data. |
 
-### ⚠️ Guardrails & Execution Rules
+---
+
+## ⚠️ Guardrails & Execution Rules
 
 * **Strictly Read-Only:** The agent is hard-blocked from executing `INSERT`, `UPDATE`, `DELETE`, or structural schema modifications.
 * **Deterministic Logic:** Avoids conversational hallucinations by grounding all database diagnostics directly in real-time MCP tool outputs.
 * **Schema-Aware Context:** Employs `introspect_database` automatically whenever table or column mappings are ambiguous.
 * **Non-Production Scope:** Designed for local evaluation, safe sandboxes, and development testing loops only.
 
-### 💡 Example Prompts
+---
+
+## 💡 Example Prompts
 
 Interact with the assistant using natural language commands, which map directly to secure database operations:
+
 * 🗣️ *"Check bloat in the 'sales' table"* ➔ Triggers the `checkTableBloat` tool.
 * 🗣️ *"Show cluster status"* ➔ Triggers the `getClusterStatus` tool.
 * 🗣️ *"List all users in the 'public' schema"* ➔ Safety-checks and executes an optimized `SELECT` query.
@@ -56,13 +58,10 @@ Let me know your Greenplum task—I’ll provide exact SQL, diagnostics, and cle
 
 Ensure your host environment meets the following specifications before launching the application:
 
-### Infrastructure & Language Models
 * **Greenplum MCP Server:** A deployed and active MCP server instance reachable via network IP.
-* **LLM Engine:** A localized runner (e.g., Ollama running `qwen3:30b`) or an external model host accessible from the application environment.
-
-### Software Requirements
+* **LLM Engine:** A localized runner (e.g., Ollama running `qwen3:30b`) or cloud provider credentials (OpenAI/Anthropic).
 * **Java Runtime:** Java Development Kit (JDK) 17 or higher.
-* **Build Automation:** Apache Maven 4.0.0+ configured in your local environment.
+* **Build Automation (Optional):** Apache Maven 4.0.0+ (only required if building from source).
 
 ---
 
@@ -71,43 +70,59 @@ Ensure your host environment meets the following specifications before launching
 ### 1. Clone the Source
 Pull down the project repository and navigate into the root directory:
 ```bash
-git clone https://github.com/sendjainabhi/greenplum-ai-agent.git
+git clone [https://github.com/sendjainabhi/greenplum-ai-agent.git](https://github.com/sendjainabhi/greenplum-ai-agent.git)
 cd greenplum-ai-agent
 ```
 
-### 2. Initialize the Local Language Model
-If utilizing a local deployment via Ollama, start the model orchestration engine:
+### 2. Initialize Local Dependencies (Optional)
+If utilizing a local deployment via Ollama instead of a cloud provider, start your model orchestration engine:
 ```bash
 ollama serve
 ```
 
-### 3. Application Configuration
-Update your configuration management files (`application.yml` or `application.properties`) to reference your target infrastructure:
+### 3. Launch the Application
+You do **not** need to hardcode API keys into configuration files. You can run the application using the pre-compiled executable or build it directly from the source code.
 
-#### LLM Profile (Ollama)
-```yaml
-ollama:
-  server:
-    url: http://localhost:11434
-  model:
-    name: qwen3:30b
-    timeout-seconds: 360
+#### Option A: Quick Start (Pre-Compiled Executable)
+A compiled `.jar` file and startup scripts are already included in the root directory of this repository for your convenience.
+
+**For Windows Users:**
+Simply double-click the `start.bat` file in the project folder, or run it via the command prompt:
+```cmd
+start.bat
 ```
 
-#### Greenplum MCP Connectivity
-```yaml
-mcp:
-  server:
-    url: http://<greenplum mcp server host ip>/mcp
-    auth-header: Basic <gp mcp server auth base 64 (user:password)>
-```
-
-### 4. Run the Engine
-Compile dependencies and boot up the Spring Boot framework:
+**For Mac / Linux Users:**
+Open your terminal in the project folder, make the script executable (only needed once), and run it:
 ```bash
-mvn clean compile  
-mvn spring-boot:run
+chmod +x start.sh
+./start.sh
 ```
+
+#### Option B: Run from Source (Development Mode)
+If you prefer to compile and run the source code directly using Maven, run the following command in your terminal:
+```bash
+mvn clean spring-boot:run
+```
+
+---
+
+## ⚙️ Dynamic UI Configuration (Models & MCP)
+Once the application is running, all AI Model and MCP configurations are handled securely through the browser interface.
+
+1. Open your web browser and navigate to `http://localhost:8080`.
+2. Click the **⚙️ Settings** button in the top right corner of the header.
+3. **Configure your AI Model:**
+   * **AI Provider:** Select your preferred engine (Ollama, OpenAI, or Anthropic).
+   * **Server Base URL:** Provide the endpoint (e.g., `http://localhost:11434` for Ollama). Optional for cloud proxies.
+   * **API Key:** Enter your secure token (required for OpenAI/Anthropic).
+   * **Model Name:** Specify the exact model string (e.g., `qwen3:30b`, `gpt-4o`, `claude-3-5-sonnet-20241022`).
+4. **Configure Greenplum MCP:**
+   * **MCP Server URL:** The network endpoint of your MCP server (e.g., `http://xx.xx.xx.xx:port/mcp`).
+   * **MCP Auth Header:** Your Base64 encoded Basic auth credentials.
+5. Click **Test Connection** to verify your setup. If the status indicator turns green (`System Online`), click **Save & Close** to begin chatting!
+
+*(Note: Your credentials are saved securely in your browser's local storage and are never permanently hardcoded onto the server).*
 
 ---
 
@@ -115,5 +130,7 @@ mvn spring-boot:run
 
 ### Log Inspection
 All query generations, tool invocations, and runtime execution graphs are piped to standard out and file appenders.
-* Navigate to the **logs directory** generated automatically within the project root workspace.
+
+* If running via the pre-compiled executable or startup scripts, an application log file (`greenplum-agent.log`) will automatically be generated in your current execution directory.
+* If running via IDE/Maven, navigate to the **logs directory** generated automatically within the project root workspace.
 * Monitor live transactional queries, trace network requests, and review query optimization paths inside the output log streams.
