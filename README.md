@@ -108,23 +108,31 @@ mvn clean spring-boot:run
 
 ---
 
-## ⚙️ Dynamic UI Configuration (Models & MCP)
-Once the application is running, all AI Model and MCP configurations are handled securely through the browser interface.
+## ⚙️ Administration & Configuration Workflow
 
+The application employs a streamlined security workflow. Anyone with access to the UI can use the agent, but only administrators can alter the global AI and MCP network routing configurations.
+
+### Standard Usage
 1. Open your web browser and navigate to `http://localhost:8080`.
-2. Click the **⚙️ Settings** button in the top right corner of the header.
-3. **Configure your AI Model:**
-   * **AI Provider:** Select your preferred engine (Ollama, OpenAI, or Anthropic).
-   * **Server Base URL:** Provide the endpoint (e.g., `http://localhost:11434` for Ollama). Optional for cloud proxies.
-   * **API Key:** Enter your secure token (required for OpenAI/Anthropic).
-   * **Model Name:** Specify the exact model string (e.g., `qwen3:30b`, `gpt-4o`, `claude-3-5-sonnet-20241022`).
-4. **Configure Greenplum MCP:**
-   * **MCP Server URL:** The network endpoint of your MCP server (e.g., `http://xx.xx.xx.xx:port/mcp`).
-   * **MCP Auth Header:** Your Base64 encoded Basic auth credentials.
-5. Click **Test Connection** to verify your setup. If the status indicator turns green (`System Online`), click **Save & Close** to begin chatting!
+2. Begin chatting immediately!
 
-*(Note: Your credentials are saved securely in your browser's local storage and are never permanently hardcoded onto the server).*
+### Admin Configuration
+To change the AI provider, model, or database connection details:
 
+1. Click the **⚙️ Settings** button in the top right corner.
+2. Provide the administrator credentials when prompted (Default: `admin` / `admin`).
+3. You have two options to configure the system:
+   * **Option A: Upload Config File:** Click **"📤 Upload Config File"** to automatically populate the fields using a formatted `.properties` or `.txt` template.
+   * **Option B: Manual Entry:**
+     * **AI Provider Type:** Select OpenAI Compatible, Ollama, or Anthropic.
+     * **Endpoint / Base URL:** The routing URL for your chosen provider.
+     * **Authentication / API Key:** Your secure token (if applicable).
+     * **Model Name:** The exact model string (e.g., `qwen2.5:32b`, `gpt-4o`).
+     * **MCP Server URL & Auth Header:** Your Greenplum MCP routing details.
+4. Click **Test Connection** to verify your setup.
+5. Click **Save Configuration** to apply the changes globally across the server.
+
+*(Note: Configurations are saved securely to a local `.properties` file on the backend server, ensuring stateless and secure frontend operations without exposing credentials in the browser).*
 ---
 
 ## 📄 Monitoring & Troubleshooting

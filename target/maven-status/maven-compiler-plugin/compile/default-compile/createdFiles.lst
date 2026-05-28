@@ -1,4 +1,5 @@
 com/example/agent/GreenplumAgent.class
 com/example/agent/GreenplumMcpTools.class
 com/example/agent/GreenplumAgentApplication.class
+com/example/agent/AuthController.class
 com/example/agent/ChatController.class

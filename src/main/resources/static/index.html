@@ -7,84 +7,16 @@
     
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     
-    <style>
-        :root {
-            --primary-color: #0284c7;       
-            --primary-hover: #0369a1;       
-            --ai-bubble-bg: #e0f2fe;        
-            --user-bubble-bg: #e5e7eb;     
-            --body-bg: #f3f4f6;            
-            --text-color: #1f2937;         
-        }
-
-        body { font-family: system-ui, -apple-system, sans-serif; background-color: var(--body-bg); color: var(--text-color); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .chat-container { width: 95%; max-width: 1600px; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 88vh; position: relative; }
-
-        .header { background: var(--primary-color); color: white; padding: 15px 20px; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 1.2em; display: flex; justify-content: space-between; align-items: center; }
-        .settings-btn { background: transparent; border: 1px solid rgba(255,255,255,0.6); color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
-        .settings-btn:hover { background: rgba(255,255,255,0.2); border-color: white; }
-
-        /* NEW: Status Indicator Styles */
-        .status-container { display: flex; align-items: center; gap: 10px; font-size: 0.75em; font-weight: normal; background: rgba(0,0,0,0.15); padding: 4px 10px; border-radius: 20px; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; transition: background-color 0.3s; }
-        .status-online { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
-        .status-offline { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
-        .status-testing { background-color: #f59e0b; animation: pulse 1.5s infinite; }
-        .status-unknown { background-color: #9ca3af; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
-
-        .messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-        .message-wrapper { display: flex; flex-direction: column; gap: 5px; max-width: 92%; }
-        .wrapper-user { align-self: flex-end; }
-        .wrapper-ai { align-self: flex-start; width: 100%; }
-        .message { padding: 16px 20px; border-radius: 8px; line-height: 1.5; overflow-wrap: break-word; }
-        .user-message { background: var(--user-bubble-bg); }
-        .ai-message { background: var(--ai-bubble-bg); width: 100%; box-sizing: border-box; }
-
-        table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 0.9em; background-color: white; }
-        th, td { padding: 10px 12px; border: 1px solid #9ca3af; text-align: left; }
-        th { background-color: var(--primary-color); color: white; font-weight: bold; }
-        tr:nth-child(even) { background-color: #f9fafb; }
-        .chart-wrapper { background: white; border: 1px solid #cbd5e1; border-radius: 6px; padding: 15px; margin: 15px 0; width: 100%; max-width: 600px; height: 300px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .ai-message pre code { display: block; padding: 10px; overflow-x: auto; background: #1f2937; color: #f9fafb; border-radius: 4px; }
-
-        .input-area { padding: 15px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; }
-        .chat-input { flex-grow: 1; padding: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 1em; }
-        .send-btn { background: var(--primary-color); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 1em; font-weight: bold; transition: background 0.2s ease; }
-        .send-btn:hover { background: var(--primary-hover); }
-        
-        .loading-container { padding: 0 20px; }
-        .loading { font-style: italic; color: #6b7280; font-size: 0.9em; display: none; margin-bottom: 10px; }
-
-        /* Modal Overlay */
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
-        .modal-content { background: white; padding: 25px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; }
-        .modal-content h3 { margin-top: 0; color: var(--primary-color); border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 20px; }
-        
-        .form-group { margin-bottom: 15px; display: flex; flex-direction: column; gap: 5px; }
-        .form-group label { font-size: 0.85em; font-weight: bold; color: #475569; }
-        .form-group input, .form-group select { padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-        .help-text { font-size: 0.75em; color: #64748b; margin-top: -3px; }
-        
-        .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 20px; }
-        .btn-save { background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-cancel { background: #e5e7eb; color: #374151; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        
-        .btn-test { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: auto; }
-        .btn-test:hover { background: #059669; }
-        .btn-test:disabled { background: #9ca3af; cursor: not-allowed; }
-        .test-result { font-size: 0.85em; margin-top: 15px; font-weight: bold; padding: 10px; border-radius: 4px; display: none; }
-        .test-success { background: #d1fae5; color: #065f46; display: block; }
-        .test-error { background: #fee2e2; color: #991b1b; display: block; }
-
-        .chat-input:disabled { background-color: #f3f4f6; cursor: not-allowed; color: #9ca3af; }
-        .send-btn:disabled { background-color: #9ca3af; cursor: not-allowed; }
-    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    
+    <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 
-<div class="chat-container">
+<div class="chat-container" id="appContainer" style="display: flex;">
     <div class="header">
         <div style="display: flex; align-items: center; gap: 15px;">
             <span>Greenplum AI Analytics Agent</span>
@@ -93,12 +25,16 @@
                 <span id="headerStatusText">Not Tested</span>
             </div>
         </div>
-        <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
+        
+        <div class="header-actions">
+            <button class="settings-btn" onclick="clearChat()" style="background: transparent;">🗑️ Clear Chat</button>
+            <button class="settings-btn" id="settingsBtn" onclick="attemptOpenSettings()">⚙️ Settings</button>
+        </div>
     </div>
 
     <div class="messages" id="messages">
         <div class="message-wrapper wrapper-ai">
-            <div class="message ai-message">Hello! I am ready to analyze your Greenplum database. How can I help you today?</div>
+            <div class="message ai-message">Hello! I am connected to the server. How can I help you today?</div>
         </div>
     </div>
     
@@ -107,54 +43,78 @@
     </div>
     
     <div class="input-area">
-        <input type="text" id="prompt" class="chat-input" placeholder="Ask a database question..." onkeypress="if(event.key === 'Enter') sendPrompt()">
+        <div id="suggestionBox" class="suggestion-box"></div>
+        <textarea id="prompt" class="chat-input" placeholder="Ask a database question... (Shift+Enter for new line)" rows="1"></textarea>
         <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send</button>
+        <button class="send-btn" id="cancelBtn" onclick="cancelRequest()" style="display: none; background: #ef4444; border-color: #ef4444;">Cancel</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="loginModal" style="display: none;">
+    <div class="modal-content" style="max-width: 350px;">
+        <h3>Admin Login Required</h3>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="authUsername" placeholder="Enter username">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="authPassword" placeholder="Enter password" onkeypress="if(event.key === 'Enter') performLogin()">
+        </div>
+        <div id="loginError" class="test-result test-error" style="display: none; margin-bottom: 15px;">Invalid credentials.</div>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="closeLoginModal()">Cancel</button>
+            <button class="btn-save" onclick="performLogin()">Login</button>
+        </div>
     </div>
 </div>
 
 <div class="modal-overlay" id="settingsModal">
     <div class="modal-content">
-        <h3>Agent Configuration</h3>
+        <h3>Agent Configuration (Global)</h3>
+        
+        <div class="form-group" style="background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px dashed #cbd5e1; margin-bottom: 25px;">
+            <label style="color: #0369a1; font-size: 0.95em;">📤 Upload Config File</label>
+            <input type="file" id="configFileUpload" accept=".properties,.txt" onchange="handleConfigUpload(event)" style="border: none; padding: 5px 0; background: transparent;">
+            <div class="help-text" style="font-size: 0.85em; color: #64748b;">Upload a .properties file to auto-fill the fields below.</div>
+        </div>
         
         <div class="form-group">
-            <label>AI Provider</label>
+            <label>AI Provider Type</label>
             <select id="provider" onchange="toggleProviderFields()">
-                <option value="ollama">Ollama (Local)</option>
-                <option value="openai">OpenAI</option>
+                <option value="" disabled selected>Select Provider Type</option>
+                <option value="openai">OpenAI Compatible (OpenAI, vLLM, LMStudio, Groq, etc.)</option>
+                <option value="ollama">Ollama (Native)</option>
                 <option value="anthropic">Anthropic (Claude)</option>
             </select>
-            <div class="help-text">Select your preferred AI backend.</div>
         </div>
-
-        <div class="form-group" id="baseUrlGroup">
-            <label id="baseUrlLabel">Server Base URL</label>
+        <div class="form-group">
+            <label id="baseUrlLabel">Endpoint / Base URL</label>
             <input type="text" id="baseUrl">
-            <div class="help-text" id="baseUrlHelp">Format: http://localhost:11434</div>
+            <div id="baseUrlHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Select a provider to see format</div>
         </div>
-        
-        <div class="form-group" id="apiKeyGroup" style="display: none;">
-            <label>API Key</label>
-            <input type="password" id="apiKey" placeholder="Enter API Key">
-            <div class="help-text" id="apiKeyHelp">Secure token.</div>
+        <div class="form-group">
+            <label>Authentication / API Key (Optional)</label>
+            <input type="password" id="apiKey">
+            <div id="apiKeyHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Select a provider to see format</div>
         </div>
-
         <div class="form-group">
             <label>Model Name</label>
             <input type="text" id="modelName">
-            <div class="help-text" id="modelNameHelp">Examples: qwen3:30b, llama3</div>
+            <div id="modelNameHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Select a provider to see format</div>
         </div>
-
+        
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-
+        
         <div class="form-group">
             <label>MCP Server URL</label>
-            <input type="text" id="mcpUrl" placeholder="http://10.85.69.214:80/mcp">
-            <div class="help-text">Format: http://&lt;ip&gt;:&lt;port&gt;/mcp</div>
+            <input type="text" id="mcpUrl">
+            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Format: http://10.85.69.214:80/mcp</div>
         </div>
         <div class="form-group">
-            <label>MCP Auth Header (Basic)</label>
-            <input type="password" id="mcpAuth" placeholder="Basic Z21fYWRtaW46Vk13YXJlMSE=">
-            <div class="help-text">Format: Basic &lt;base64_encoded_credentials&gt;</div>
+            <label>MCP Auth Header</label>
+            <input type="password" id="mcpAuth">
+            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Format: Basic Z21fYWRtaW46Vk13YXJlMSE=</div>
         </div>
         
         <div id="testResult" class="test-result"></div>
@@ -162,265 +122,11 @@
         <div class="modal-actions">
             <button class="btn-test" id="testBtn" onclick="testConnection()">Test Connection</button>
             <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
-            <button class="btn-save" onclick="saveSettings()">Save & Close</button>
+            <button class="btn-save" onclick="saveSettings()">Save Configuration</button>
         </div>
     </div>
 </div>
 
-<script>
-    // --- Header Status Logic ---
-    function updateHeaderStatus(state) {
-        const dot = document.getElementById('headerStatusDot');
-        const text = document.getElementById('headerStatusText');
-        
-        // Reset classes
-        dot.className = 'status-dot';
-        
-        if (state === 'testing') {
-            dot.classList.add('status-testing');
-            text.textContent = 'Testing...';
-        } else if (state === 'online') {
-            dot.classList.add('status-online');
-            text.textContent = 'System Online';
-        } else if (state === 'offline') {
-            dot.classList.add('status-offline');
-            text.textContent = 'System Offline';
-        } else {
-            dot.classList.add('status-unknown');
-            text.textContent = 'Not Tested';
-        }
-    }
-
-    // --- Settings UI Logic ---
-    function toggleProviderFields() {
-        const provider = document.getElementById('provider').value;
-        const baseUrlLabel = document.getElementById('baseUrlLabel');
-        const baseUrlInput = document.getElementById('baseUrl');
-        const baseUrlHelp = document.getElementById('baseUrlHelp');
-        const apiKeyGroup = document.getElementById('apiKeyGroup');
-        const apiKeyHelp = document.getElementById('apiKeyHelp');
-        const modelNameInput = document.getElementById('modelName');
-        const modelNameHelp = document.getElementById('modelNameHelp');
-
-        if (provider === 'ollama') {
-            apiKeyGroup.style.display = 'none';
-            baseUrlLabel.textContent = 'Ollama Server URL';
-            baseUrlInput.placeholder = 'http://localhost:11434';
-            baseUrlHelp.textContent = 'Format: http://<host>:<port>';
-            modelNameInput.placeholder = 'e.g. qwen3:30b';
-            modelNameHelp.textContent = 'Examples: qwen3:30b, llama3, mistral';
-        } else if (provider === 'openai') {
-            apiKeyGroup.style.display = 'flex';
-            apiKeyHelp.textContent = 'Format: sk-...';
-            baseUrlLabel.textContent = 'OpenAI Base URL (Optional)';
-            baseUrlInput.placeholder = 'https://api.openai.com/v1';
-            baseUrlHelp.textContent = 'Use only for custom proxies. Leave blank for default.';
-            modelNameInput.placeholder = 'e.g. gpt-4o';
-            modelNameHelp.textContent = 'Examples: gpt-4o, gpt-4-turbo, gpt-3.5-turbo';
-        } else if (provider === 'anthropic') {
-            apiKeyGroup.style.display = 'flex';
-            apiKeyHelp.textContent = 'Format: sk-ant-...';
-            baseUrlLabel.textContent = 'Anthropic Base URL (Optional)';
-            baseUrlInput.placeholder = 'https://api.anthropic.com/v1';
-            baseUrlHelp.textContent = 'Use only for custom proxies. Leave blank for default.';
-            modelNameInput.placeholder = 'e.g. claude-3-5-sonnet-20241022';
-            modelNameHelp.textContent = 'Examples: claude-3-5-sonnet-20241022, claude-3-opus-20240229';
-        }
-    }
-
-    function openSettings() {
-        document.getElementById('provider').value = localStorage.getItem('gp_provider') || 'ollama';
-        document.getElementById('baseUrl').value = localStorage.getItem('gp_baseUrl') || '';
-        document.getElementById('apiKey').value = localStorage.getItem('gp_apiKey') || '';
-        document.getElementById('modelName').value = localStorage.getItem('gp_modelName') || 'qwen3:30b';
-        document.getElementById('mcpUrl').value = localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp';
-        document.getElementById('mcpAuth').value = localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE=';
-        
-        document.getElementById('testResult').className = 'test-result';
-        document.getElementById('testResult').textContent = '';
-
-        toggleProviderFields();
-        document.getElementById('settingsModal').style.display = 'flex';
-    }
-
-    function closeSettings() {
-        document.getElementById('settingsModal').style.display = 'none';
-    }
-
-    function saveSettings() {
-        localStorage.setItem('gp_provider', document.getElementById('provider').value);
-        localStorage.setItem('gp_baseUrl', document.getElementById('baseUrl').value.trim());
-        localStorage.setItem('gp_apiKey', document.getElementById('apiKey').value.trim());
-        localStorage.setItem('gp_modelName', document.getElementById('modelName').value.trim());
-        localStorage.setItem('gp_mcpUrl', document.getElementById('mcpUrl').value.trim());
-        localStorage.setItem('gp_mcpAuth', document.getElementById('mcpAuth').value.trim());
-        closeSettings();
-    }
-
-    // --- Test Connection Logic ---
-    async function testConnection() {
-        const testBtn = document.getElementById('testBtn');
-        const resultDiv = document.getElementById('testResult');
-        
-        testBtn.disabled = true;
-        testBtn.textContent = 'Testing...';
-        updateHeaderStatus('testing');
-        
-        resultDiv.className = 'test-result';
-        resultDiv.textContent = 'Connecting to AI provider...';
-        resultDiv.style.display = 'block';
-
-        const payload = {
-            provider: document.getElementById('provider').value,
-            baseUrl: document.getElementById('baseUrl').value.trim(),
-            apiKey: document.getElementById('apiKey').value.trim(),
-            modelName: document.getElementById('modelName').value.trim()
-        };
-
-        try {
-            const response = await fetch('/api/test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            
-            if (data.status === 'success') {
-                resultDiv.textContent = '✅ ' + data.message;
-                resultDiv.className = 'test-result test-success';
-                updateHeaderStatus('online');
-            } else {
-                resultDiv.textContent = '❌ ' + data.message;
-                resultDiv.className = 'test-result test-error';
-                updateHeaderStatus('offline');
-            }
-        } catch (error) {
-            resultDiv.textContent = '❌ Network error: Could not reach Spring Boot backend.';
-            resultDiv.className = 'test-result test-error';
-            updateHeaderStatus('offline');
-        } finally {
-            testBtn.disabled = false;
-            testBtn.textContent = 'Test Connection';
-        }
-    }
-
-    // --- Chat Logic ---
-    async function sendPrompt() {
-        const input = document.getElementById('prompt');
-        const sendBtn = document.getElementById('sendBtn');
-        const prompt = input.value.trim();
-        if (!prompt) return;
-
-        addMessage(prompt, 'user-message', false);
-        input.value = '';
-        
-        input.disabled = true;
-        sendBtn.disabled = true;
-        updateHeaderStatus('testing');
-        
-        const loading = document.getElementById('loading');
-        loading.style.display = 'block';
-        
-        const loadingPhases = [
-            "Analyzing database schemas via MCP...",
-            "Constructing secure SQL queries...",
-            "Retrieving data from Greenplum...",
-            "Formulating insights & charts..."
-        ];
-        let phaseIndex = 0;
-        loading.textContent = "Connecting to agent...";
-        
-        const loadingInterval = setInterval(() => {
-            loading.textContent = loadingPhases[phaseIndex % loadingPhases.length];
-            phaseIndex++;
-        }, 2000);
-
-        const payload = { 
-            prompt: prompt,
-            provider: localStorage.getItem('gp_provider') || 'ollama',
-            baseUrl: localStorage.getItem('gp_baseUrl') || '',
-            apiKey: localStorage.getItem('gp_apiKey') || '',
-            modelName: localStorage.getItem('gp_modelName') || 'qwen3:30b',
-            mcpUrl: localStorage.getItem('gp_mcpUrl') || 'http://10.85.69.214:80/mcp',
-            mcpAuth: localStorage.getItem('gp_mcpAuth') || 'Basic Z21fYWRtaW46Vk13YXJlMSE='
-        };
-
-        try {
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            addMessage(data.response, 'ai-message', true);
-            updateHeaderStatus('online'); // Switch to Green on success
-        } catch (error) {
-            addMessage('Error connecting to backend API.', 'ai-message', false);
-            updateHeaderStatus('offline'); // Switch to Red on fail
-        } finally {
-            clearInterval(loadingInterval);
-            loading.style.display = 'none';
-            input.disabled = false;
-            sendBtn.disabled = false;
-            input.focus(); 
-        }
-    }
-
-    // --- UI Rendering ---
-    function addMessage(text, className, isMarkdown) {
-        const messagesDiv = document.getElementById('messages');
-        const wrapperDiv = document.createElement('div');
-        wrapperDiv.className = `message-wrapper ${className === 'user-message' ? 'wrapper-user' : 'wrapper-ai'}`;
-        
-        const msgDiv = document.createElement('div');
-        msgDiv.className = `message ${className}`;
-        wrapperDiv.appendChild(msgDiv);
-        
-        if (isMarkdown) {
-            let processedText = text;
-            const chartCaches = [];
-            const chartRegex = /```chart\s*([\s\S]*?)\s*```/g;
-            let match;
-            
-            while ((match = chartRegex.exec(text)) !== null) {
-                const uniqueChartId = 'graph-canvas-' + Math.random().toString(36).substring(2, 9);
-                chartCaches.push({ id: uniqueChartId, jsonConfig: match[1].trim() });
-                processedText = processedText.replace(match[0], `<div class="chart-wrapper"><canvas id="${uniqueChartId}"></canvas></div>`);
-            }
-            
-            msgDiv.innerHTML = marked.parse(processedText);
-            messagesDiv.appendChild(wrapperDiv);
-            
-            chartCaches.forEach(chartObj => setTimeout(() => constructSimpleGraph(chartObj.id, chartObj.jsonConfig), 50));
-        } else {
-            msgDiv.textContent = text;
-            messagesDiv.appendChild(wrapperDiv);
-        }
-        
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-
-    function constructSimpleGraph(canvasId, jsonConfigString) {
-        try {
-            const parsedConfig = JSON.parse(jsonConfigString);
-            const canvasCtx = document.getElementById(canvasId).getContext('2d');
-            const colorPalette = ['#0284c7', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6'];
-            
-            new Chart(canvasCtx, {
-                type: parsedConfig.type || 'bar',
-                data: {
-                    labels: parsedConfig.labels,
-                    datasets: parsedConfig.datasets.map((dataset, idx) => ({
-                        ...dataset,
-                        backgroundColor: colorPalette[idx % colorPalette.length],
-                        borderWidth: 1
-                    }))
-                },
-                options: { responsive: true, maintainAspectRatio: false }
-            });
-        } catch (err) { console.error("Graph rendering failed: ", err); }
-    }
-</script>
-
+<script src="/js/app.js"></script>
 </body>
 </html>
