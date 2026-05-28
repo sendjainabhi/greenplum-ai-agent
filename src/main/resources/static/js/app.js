@@ -162,7 +162,6 @@ function toggleProviderFields() {
     const provider = document.getElementById('provider').value;
     const baseUrlLabel = document.getElementById('baseUrlLabel');
     
-    // UPDATED: Now targeting the dedicated help text <div> elements
     const baseUrlHelp = document.getElementById('baseUrlHelp');
     const apiKeyHelp = document.getElementById('apiKeyHelp');
     const modelNameHelp = document.getElementById('modelNameHelp');
@@ -266,7 +265,7 @@ async function sendPrompt() {
     
     sendBtn.style.display = 'none';
     cancelBtn.style.display = 'block';
-    updateHeaderStatus('testing');
+    updateHeaderStatus('running');
     
     const loading = document.getElementById('loading');
     loading.style.display = 'block';
@@ -314,11 +313,30 @@ function cancelRequest() {
     if (currentAbortController) currentAbortController.abort();
 }
 
+// UPDATED: Now uses "Connected" and "Disconnected" terminology
 function updateHeaderStatus(state) {
     const dot = document.getElementById('headerStatusDot');
     const text = document.getElementById('headerStatusText');
-    dot.className = 'status-dot ' + (state === 'testing' ? 'status-testing' : state === 'online' ? 'status-online' : state === 'offline' ? 'status-offline' : 'status-unknown');
-    text.textContent = state === 'testing' ? 'Testing...' : state === 'online' ? 'System Online' : state === 'offline' ? 'System Offline' : 'Not Tested';
+    
+    let dotClass = 'status-unknown';
+    let statusText = 'Disconnected'; // Default state
+
+    if (state === 'testing') {
+        dotClass = 'status-testing';
+        statusText = 'Testing...';
+    } else if (state === 'running') {
+        dotClass = 'status-testing'; 
+        statusText = 'Running...';
+    } else if (state === 'online') {
+        dotClass = 'status-online';
+        statusText = 'Connected';
+    } else if (state === 'offline') {
+        dotClass = 'status-offline';
+        statusText = 'Disconnected';
+    }
+
+    dot.className = 'status-dot ' + dotClass;
+    text.textContent = statusText;
 }
 
 function addMessage(text, className, isMarkdown) {

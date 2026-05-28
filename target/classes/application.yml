@@ -13,14 +13,6 @@ server:
   #  url: http://xx.xx.69.214:80/mcp
    # auth-header: "Basic Z21fYWRtaW4xxxxxx"
 
-# --- NEW: Logging Configuration ---
-logging:
-  file:
-    # This creates the log file in the exact directory where the app is executed
-    name: greenplum-agent.log
-  level:
-    root: INFO
-    com.example.agent: DEBUG
-  pattern:
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"   
+
+
 
