@@ -16,37 +16,43 @@
 </head>
 <body>
 
-<div class="chat-container" id="appContainer" style="display: flex;">
-    <div class="header">
-        <div style="display: flex; align-items: center; gap: 15px;">
-            <span>Greenplum AI Analytics Agent</span>
-            <div class="status-container">
-                <span id="headerStatusDot" class="status-dot status-unknown"></span>
-                <span id="headerStatusText">Disconnected</span>
-            </div>
-        </div>
-        
-        <div class="header-actions">
-            <button class="settings-btn" onclick="clearChat()" style="background: transparent;">🗑️ Clear Chat</button>
-            <button class="settings-btn" id="settingsBtn" onclick="attemptOpenSettings()">⚙️ Settings</button>
-        </div>
+<div class="app-layout">
+    
+    <div class="sidebar" id="sidebar">
+        <button class="new-chat-btn" onclick="createNewChat()">+ New Chat</button>
+        <div class="chat-list-header">Conversations (Max 4)</div>
+        <div class="chat-list" id="chatList"></div>
     </div>
 
-    <div class="messages" id="messages">
-        <div class="message-wrapper wrapper-ai">
-            <div class="message ai-message">Hello! I am connected to the server. How can I help you today?</div>
+    <div class="chat-container" id="appContainer">
+        <div class="header">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <span>Greenplum AI Analytics Agent</span>
+                <div class="status-container">
+                    <span id="headerStatusDot" class="status-dot status-unknown"></span>
+                    <span id="headerStatusText">Disconnected</span>
+                </div>
+            </div>
+            
+            <div class="header-actions">
+                <button class="settings-btn" onclick="clearChat()" style="background: transparent;">🗑️ Delete Current Chat</button>
+                <button class="settings-btn" id="settingsBtn" onclick="attemptOpenSettings()">⚙️ Settings</button>
+            </div>
         </div>
-    </div>
-    
-    <div class="loading-container">
-        <span class="loading" id="loading">Agent is processing request...</span>
-    </div>
-    
-    <div class="input-area">
-        <div id="suggestionBox" class="suggestion-box"></div>
-        <textarea id="prompt" class="chat-input" placeholder="Ask a database question... (Shift+Enter for new line)" rows="1"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send</button>
-        <button class="send-btn" id="cancelBtn" onclick="cancelRequest()" style="display: none; background: #ef4444; border-color: #ef4444;">Cancel</button>
+
+        <div class="messages" id="messages">
+            </div>
+        
+        <div class="loading-container">
+            <span class="loading" id="loading">Agent is processing request...</span>
+        </div>
+        
+        <div class="input-area">
+            <div id="suggestionBox" class="suggestion-box"></div>
+            <textarea id="prompt" class="chat-input" placeholder="Ask a database question... (Shift+Enter for new line)" rows="1"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send</button>
+            <button class="send-btn" id="cancelBtn" onclick="cancelRequest()" style="display: none; background: #ef4444; border-color: #ef4444;">Cancel</button>
+        </div>
     </div>
 </div>
 
@@ -76,14 +82,13 @@
         <div class="form-group" style="background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px dashed #cbd5e1; margin-bottom: 25px;">
             <label style="color: #0369a1; font-size: 0.95em;">📤 Upload Config File</label>
             <input type="file" id="configFileUpload" accept=".properties,.txt" onchange="handleConfigUpload(event)" style="border: none; padding: 5px 0; background: transparent;">
-            <div class="help-text" style="font-size: 0.85em; color: #64748b;">Upload a .properties file to auto-fill the fields below.</div>
         </div>
         
         <div class="form-group">
             <label>AI Provider Type</label>
             <select id="provider" onchange="toggleProviderFields()">
                 <option value="" disabled selected>Select Provider Type</option>
-                <option value="openai">OpenAI Compatible (OpenAI, vLLM, LMStudio, Groq, etc.)</option>
+                <option value="openai">OpenAI Compatible (vLLM, LMStudio, etc.)</option>
                 <option value="ollama">Ollama (Native)</option>
                 <option value="anthropic">Anthropic (Claude)</option>
             </select>

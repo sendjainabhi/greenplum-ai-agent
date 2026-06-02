@@ -1,404 +1,282 @@
-// --- 1. Smart Autocomplete & Global State ---
-let suggestionHistory = new Set();
-let currentAbortController = null;
-
-// Persistent User ID & UI History
-let persistentUserId = localStorage.getItem('gp_user_id');
-if (!persistentUserId) {
-    persistentUserId = 'user-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
-    localStorage.setItem('gp_user_id', persistentUserId);
+// --- 1. Bulletproof Memory Loading ---
+function safeParse(key, defaultVal) {
+    try {
+        const val = localStorage.getItem(key);
+        return val ? JSON.parse(val) : defaultVal;
+    } catch (e) {
+        console.warn(`[RECOVERY] Wiping corrupted memory key: ${key}`);
+        localStorage.removeItem(key);
+        return defaultVal;
+    }
 }
 
-let chatUiHistory = JSON.parse(localStorage.getItem('gp_chat_ui_' + persistentUserId) || '[]');
+// Global State
+let activeRequests = {}; 
+let suggestionHistory = new Set();
+let chatSessions = safeParse('gp_sessions', []);
+if (!Array.isArray(chatSessions)) chatSessions = []; // Enforce array type
+let currentSessionId = localStorage.getItem('gp_current_session');
+let currentChatUiHistory = [];
 
 window.onload = function() {
-    const savedHistory = JSON.parse(localStorage.getItem('gp_history') || '[]');
-    suggestionHistory = new Set([
-        "Check bloat in the 'sales' table",
-        "Show cluster status",
-        "List all users in the 'public' schema",
-        ...savedHistory
-    ]);
-    setupTextarea();
+    try {
+        const savedHistory = safeParse('gp_history', []);
+        const historyArray = Array.isArray(savedHistory) ? savedHistory : [];
+        
+        suggestionHistory = new Set([
+            "Check bloat in the 'sales' table",
+            "Show cluster status",
+            "List all users in the 'public' schema",
+            ...historyArray
+        ]);
 
-    if (chatUiHistory.length > 0) {
-        document.getElementById('messages').innerHTML = ''; 
-        chatUiHistory.forEach(msg => {
+        setupTextarea();
+        initSessions();
+        autoConnect();
+    } catch (err) {
+        console.error("Critical Application Load Error: ", err);
+    }
+};
+
+// --- 2. Multi-Session Logic ---
+function initSessions() {
+    if (!currentSessionId || chatSessions.length === 0) {
+        createNewChat(false);
+    } else {
+        loadSession(currentSessionId);
+    }
+}
+
+async function createNewChat(render = true) {
+    if (chatSessions.length >= 4) {
+        const oldestSession = chatSessions.pop();
+        localStorage.removeItem('gp_chat_ui_' + oldestSession.id);
+        
+        if (activeRequests[oldestSession.id]) {
+            activeRequests[oldestSession.id].abort();
+            delete activeRequests[oldestSession.id];
+        }
+
+        try {
+            await fetch('/api/chat/clear', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: oldestSession.id }) 
+            });
+        } catch (e) {
+            console.error("Failed to wipe oldest backend memory context", e);
+        }
+    }
+
+    const newId = 'session-' + Date.now();
+    chatSessions.unshift({ id: newId, title: 'New Conversation' });
+    localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
+    
+    if (render) {
+        loadSession(newId);
+        renderSidebar();
+    } else {
+        currentSessionId = newId;
+        localStorage.setItem('gp_current_session', currentSessionId);
+        renderSidebar();
+    }
+}
+
+function loadSession(sessionId) {
+    currentSessionId = sessionId;
+    localStorage.setItem('gp_current_session', currentSessionId);
+    
+    currentChatUiHistory = safeParse('gp_chat_ui_' + currentSessionId, []);
+    
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.innerHTML = ''; 
+    
+    if (currentChatUiHistory.length === 0) {
+        messagesDiv.innerHTML = `
+            <div class="message-wrapper wrapper-ai">
+                <div class="message ai-message">Hello! I am connected to the server. How can I help you today?</div>
+            </div>`;
+    } else {
+        currentChatUiHistory.forEach(msg => {
             addMessageToDOM(msg.text, msg.className, msg.isMarkdown);
         });
     }
+    
+    const isRunning = !!activeRequests[currentSessionId];
+    updateUIState(isRunning);
+    
+    renderSidebar();
+}
 
-    autoConnect();
-};
-
-function setupTextarea() {
-    const input = document.getElementById('prompt');
-    const sgBox = document.getElementById('suggestionBox');
-
-    input.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
+function renderSidebar() {
+    const chatList = document.getElementById('chatList');
+    if (!chatList) return; // Failsafe
+    chatList.innerHTML = '';
+    
+    chatSessions.forEach(session => {
+        const div = document.createElement('div');
+        div.className = `chat-item ${session.id === currentSessionId ? 'active' : ''}`;
+        div.textContent = session.title;
         
-        const val = this.value.toLowerCase();
-        sgBox.innerHTML = '';
-        let matches = 0;
+        if (activeRequests[session.id]) {
+            div.innerHTML = `⏳ ` + session.title;
+        }
         
-        if (val.trim().length > 0) {
-            suggestionHistory.forEach(item => {
-                if (item.toLowerCase().includes(val) && matches < 5) {
-                    const div = document.createElement('div');
-                    div.className = 'suggestion-item';
-                    div.innerText = item;
-                    div.onclick = () => { 
-                        input.value = item; 
-                        sgBox.style.display = 'none'; 
-                        input.style.height = 'auto';
-                        input.style.height = (input.scrollHeight) + 'px';
-                        input.focus(); 
-                    };
-                    sgBox.appendChild(div);
-                    matches++;
-                }
-            });
-        }
-        sgBox.style.display = matches > 0 ? 'block' : 'none';
-    });
-
-    input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sgBox.style.display = 'none';
-            sendPrompt();
-        }
-    });
-
-    document.addEventListener('click', (e) => {
-        if (e.target !== input && e.target !== sgBox) sgBox.style.display = 'none';
+        div.onclick = () => loadSession(session.id);
+        chatList.appendChild(div);
     });
 }
 
+function updateSessionTitle(firstPrompt, targetSessionId) {
+    const session = chatSessions.find(s => s.id === targetSessionId);
+    if (session && session.title === 'New Conversation') {
+        session.title = firstPrompt.length > 30 ? firstPrompt.substring(0, 30) + '...' : firstPrompt;
+        localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
+        renderSidebar();
+    }
+}
+
+// --- 3. Synchronized Memory Wipe ---
 async function clearChat() {
+    if (activeRequests[currentSessionId]) {
+        activeRequests[currentSessionId].abort();
+        delete activeRequests[currentSessionId];
+        updateUIState(false);
+    }
+
     const messagesDiv = document.getElementById('messages');
-    
     messagesDiv.innerHTML = `
         <div class="message-wrapper wrapper-ai">
             <div class="message ai-message">Chat history cleared. How can I help you?</div>
         </div>
     `;
     
-    chatUiHistory = [];
-    localStorage.removeItem('gp_chat_ui_' + persistentUserId);
+    currentChatUiHistory = [];
+    localStorage.removeItem('gp_chat_ui_' + currentSessionId);
     
     try {
         await fetch('/api/chat/clear', { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: persistentUserId })
+            body: JSON.stringify({ userId: currentSessionId }) 
         });
-        console.log("Server memory successfully wiped.");
     } catch (e) {
         console.error("Failed to clear backend memory context", e);
     }
 }
 
-// --- 2. Security Gatekeeper Logic ---
-function attemptOpenSettings() {
-    if (sessionStorage.getItem('gp_admin') === 'true') {
-        openSettings();
-    } else {
-        document.getElementById('authUsername').value = '';
-        document.getElementById('authPassword').value = '';
-        document.getElementById('loginError').style.display = 'none';
-        document.getElementById('loginModal').style.display = 'flex';
-        document.getElementById('authUsername').focus();
-    }
-}
-
-function closeLoginModal() { document.getElementById('loginModal').style.display = 'none'; }
-
-async function performLogin() {
-    const u = document.getElementById('authUsername').value.trim();
-    const p = document.getElementById('authPassword').value.trim();
-    const errorDiv = document.getElementById('loginError');
-    
-    if(!u || !p) {
-        errorDiv.textContent = 'Please enter both username and password.';
-        errorDiv.style.display = 'block';
-        return;
-    }
-    errorDiv.style.display = 'none';
-    try {
-        const response = await fetch('/api/auth/login', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: u, password: p })
-        });
-        const data = await response.json();
-        if (data.success) {
-            sessionStorage.setItem('gp_admin', 'true');
-            closeLoginModal();
-            openSettings();
-        } else {
-            errorDiv.textContent = 'Invalid admin credentials.';
-            errorDiv.style.display = 'block';
-        }
-    } catch (e) {
-        errorDiv.textContent = 'Server connection failed. Is the backend running?';
-        errorDiv.style.display = 'block';
-    }
-}
-
-// --- 3. Settings & Configuration ---
-async function openSettings() {
-    try {
-        const response = await fetch('/api/settings');
-        const settings = await response.json();
-        
-        document.getElementById('provider').value = settings.provider || '';
-        document.getElementById('baseUrl').value = settings.baseUrl || '';
-        document.getElementById('apiKey').value = settings.apiKey || '';
-        document.getElementById('modelName').value = settings.modelName || '';
-        document.getElementById('mcpUrl').value = settings.mcpUrl || '';
-        document.getElementById('mcpAuth').value = settings.mcpAuth || '';
-    } catch (e) {
-        document.getElementById('provider').value = '';
-        document.getElementById('baseUrl').value = '';
-        document.getElementById('apiKey').value = '';
-        document.getElementById('modelName').value = '';
-        document.getElementById('mcpUrl').value = '';
-        document.getElementById('mcpAuth').value = '';
-    }
-    
-    document.getElementById('testResult').style.display = 'none';
-    toggleProviderFields(); 
-    document.getElementById('settingsModal').style.display = 'flex';
-}
-
-function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
-
-async function saveSettings() {
-    const payload = {
-        provider: document.getElementById('provider').value,
-        baseUrl: document.getElementById('baseUrl').value.trim(),
-        apiKey: document.getElementById('apiKey').value.trim(),
-        modelName: document.getElementById('modelName').value.trim(),
-        mcpUrl: document.getElementById('mcpUrl').value.trim(),
-        mcpAuth: document.getElementById('mcpAuth').value.trim()
-    };
-
-    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
-    const storageData = {
-        data: payload,
-        expiry: Date.now() + thirtyDaysInMs
-    };
-    localStorage.setItem('gp_config', JSON.stringify(storageData));
-
-    await fetch('/api/settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
-    
-    closeSettings();
-    testConnection(); 
-}
-
-function toggleProviderFields() {
-    const provider = document.getElementById('provider').value;
-    const baseUrlLabel = document.getElementById('baseUrlLabel');
-    
-    const baseUrlHelp = document.getElementById('baseUrlHelp');
-    const apiKeyHelp = document.getElementById('apiKeyHelp');
-    const modelNameHelp = document.getElementById('modelNameHelp');
-
-    if (provider === 'ollama') {
-        baseUrlLabel.textContent = 'Ollama Server URL';
-        baseUrlHelp.textContent = 'Format: http://localhost:11434';
-        apiKeyHelp.textContent = 'Leave blank (Ollama does not require an API key)';
-        modelNameHelp.textContent = 'Format: qwen3:30b, llama3';
-    } else if (provider === 'openai') {
-        baseUrlLabel.textContent = 'OpenAI Compatible Base URL';
-        baseUrlHelp.textContent = 'Format: https://api.openai.com/v1 or http://localhost:1234/v1';
-        apiKeyHelp.textContent = 'Format: sk-... (Enter API Key if required)';
-        modelNameHelp.textContent = 'Format: gpt-4o, llama-3.1-70b';
-    } else if (provider === 'anthropic') {
-        baseUrlLabel.textContent = 'Anthropic Base URL';
-        baseUrlHelp.textContent = 'Format: https://api.anthropic.com/v1';
-        apiKeyHelp.textContent = 'Format: sk-ant-...';
-        modelNameHelp.textContent = 'Format: claude-3-5-sonnet-20241022';
-    } else {
-        baseUrlLabel.textContent = 'Endpoint / Base URL';
-        baseUrlHelp.textContent = 'Select a provider to see format';
-        apiKeyHelp.textContent = 'Select a provider to see format';
-        modelNameHelp.textContent = 'Select a provider to see format';
-    }
-}
-
-function handleConfigUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const content = e.target.result;
-        const config = {};
-        content.split('\n').forEach(line => {
-            line = line.trim();
-            if (line && !line.startsWith('#')) { 
-                const splitIdx = line.indexOf('=');
-                if (splitIdx > 0) {
-                    config[line.substring(0, splitIdx).trim()] = line.substring(splitIdx + 1).trim();
-                }
-            }
-        });
-        if (config.provider) document.getElementById('provider').value = config.provider.toLowerCase();
-        if (config.baseUrl) document.getElementById('baseUrl').value = config.baseUrl;
-        if (config.apiKey) document.getElementById('apiKey').value = config.apiKey;
-        if (config.modelName) document.getElementById('modelName').value = config.modelName;
-        if (config.mcpUrl) document.getElementById('mcpUrl').value = config.mcpUrl;
-        if (config.mcpAuth) document.getElementById('mcpAuth').value = config.mcpAuth;
-
-        toggleProviderFields();
-        const testResult = document.getElementById('testResult');
-        testResult.style.display = 'block'; testResult.className = 'test-result test-success';
-        testResult.textContent = '✅ File loaded! Review the fields and click "Save Configuration".';
-        event.target.value = ''; 
-    };
-    reader.readAsText(file);
-}
-
-async function testConnection() {
-    const testBtn = document.getElementById('testBtn');
-    const resultDiv = document.getElementById('testResult');
-    if(testBtn) { testBtn.disabled = true; testBtn.textContent = 'Testing...'; }
-    updateHeaderStatus('testing');
-    
-    if(resultDiv) { resultDiv.className = 'test-result'; resultDiv.textContent = 'Connecting to AI provider...'; resultDiv.style.display = 'block'; }
-
-    let providerVal = document.getElementById('provider') ? document.getElementById('provider').value : null;
-    let baseUrlVal = document.getElementById('baseUrl') ? document.getElementById('baseUrl').value.trim() : null;
-    let apiKeyVal = document.getElementById('apiKey') ? document.getElementById('apiKey').value.trim() : null;
-    let modelNameVal = document.getElementById('modelName') ? document.getElementById('modelName').value.trim() : null;
-
-    if (!providerVal) {
-        const stored = JSON.parse(localStorage.getItem('gp_config') || '{}');
-        if (stored.data) {
-            providerVal = stored.data.provider; baseUrlVal = stored.data.baseUrl;
-            apiKeyVal = stored.data.apiKey; modelNameVal = stored.data.modelName;
-        }
-    }
-
-    const payload = { provider: providerVal, baseUrl: baseUrlVal, apiKey: apiKeyVal, modelName: modelNameVal };
-
-    try {
-        const response = await fetch('/api/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        const data = await response.json();
-        if (data.status === 'success') {
-            if(resultDiv) { resultDiv.textContent = '✅ ' + data.message; resultDiv.className = 'test-result test-success'; }
-            updateHeaderStatus('online');
-        } else {
-            if(resultDiv) { resultDiv.textContent = '❌ ' + data.message; resultDiv.className = 'test-result test-error'; }
-            updateHeaderStatus('offline');
-        }
-    } catch (error) {
-        if(resultDiv) { resultDiv.textContent = '❌ Network error.'; resultDiv.className = 'test-result test-error'; }
-        updateHeaderStatus('offline');
-    } finally {
-        if(testBtn) { testBtn.disabled = false; testBtn.textContent = 'Test Connection'; }
-    }
-}
-
-// --- 4. Chat & Formatted UI Logic ---
-async function sendPrompt() {
+// --- 4. UI State Management ---
+function updateUIState(isRunning) {
     const input = document.getElementById('prompt');
     const sendBtn = document.getElementById('sendBtn');
     const cancelBtn = document.getElementById('cancelBtn');
+    const loading = document.getElementById('loading');
+
+    if (!input || !sendBtn || !cancelBtn || !loading) return; // Failsafe
+
+    if (isRunning) {
+        input.disabled = true;
+        sendBtn.style.display = 'none';
+        cancelBtn.style.display = 'block';
+        loading.style.display = 'block';
+        loading.textContent = "Connecting to agent..."; 
+        updateHeaderStatus('running');
+    } else {
+        input.disabled = false;
+        sendBtn.style.display = 'block';
+        cancelBtn.style.display = 'none';
+        loading.style.display = 'none';
+        updateHeaderStatus('online'); 
+    }
+}
+
+// --- 5. Chat Logic & API Calling ---
+async function sendPrompt() {
+    const input = document.getElementById('prompt');
     const prompt = input.value.trim();
     if (!prompt) return;
 
-    addMessage(prompt, 'user-message', false);
+    const targetSessionId = currentSessionId;
+
+    saveMessageToStorage(targetSessionId, prompt, 'user-message', false);
+    updateSessionTitle(prompt, targetSessionId); 
     
-    input.value = '';
-    input.style.height = 'auto';
-    input.disabled = true;
+    if (currentSessionId === targetSessionId) {
+        addMessageToDOM(prompt, 'user-message', false);
+        input.value = '';
+        input.style.height = 'auto';
+        updateUIState(true);
+    }
     
-    sendBtn.style.display = 'none';
-    cancelBtn.style.display = 'block';
-    updateHeaderStatus('running');
-    
-    const loading = document.getElementById('loading');
-    loading.style.display = 'block';
-    
+    activeRequests[targetSessionId] = new AbortController();
+    renderSidebar(); 
+
     const loadingPhases = ["Analyzing request...", "Constructing queries...", "Retrieving data...", "Formulating insights..."];
     let phaseIndex = 0;
-    loading.textContent = "Connecting to agent...";
-    const loadingInterval = setInterval(() => { loading.textContent = loadingPhases[phaseIndex++ % loadingPhases.length]; }, 2000);
-
-    currentAbortController = new AbortController();
+    const loadingInterval = setInterval(() => {
+        if (currentSessionId === targetSessionId) {
+            const loadingEl = document.getElementById('loading');
+            if (loadingEl && loadingEl.style.display === 'block') {
+                loadingEl.textContent = loadingPhases[phaseIndex++ % loadingPhases.length];
+            }
+        }
+    }, 2000);
 
     try {
         const response = await fetch('/api/chat', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt, userId: persistentUserId }), 
-            signal: currentAbortController.signal
+            body: JSON.stringify({ prompt: prompt, userId: targetSessionId }), 
+            signal: activeRequests[targetSessionId].signal
         });
         
         const data = await response.json();
-        addMessage(data.response, 'ai-message', true);
-        updateHeaderStatus('online'); 
+        saveMessageToStorage(targetSessionId, data.response, 'ai-message', true);
+        
+        if (currentSessionId === targetSessionId) {
+            addMessageToDOM(data.response, 'ai-message', true);
+        }
         
         suggestionHistory.add(prompt);
         localStorage.setItem('gp_history', JSON.stringify(Array.from(suggestionHistory)));
 
     } catch (error) {
-        if (error.name === 'AbortError') {
-            addMessage('⚠️ Request cancelled by user.', 'ai-message', false);
-            updateHeaderStatus('online'); 
-        } else {
-            addMessage('Error connecting to backend API.', 'ai-message', false);
-            updateHeaderStatus('offline'); 
+        const errorText = error.name === 'AbortError' ? '⚠️ Request cancelled by user.' : 'Error connecting to backend API.';
+        saveMessageToStorage(targetSessionId, errorText, 'ai-message', false);
+        
+        if (currentSessionId === targetSessionId) {
+            addMessageToDOM(errorText, 'ai-message', false);
+            if (error.name !== 'AbortError') updateHeaderStatus('offline');
         }
     } finally {
         clearInterval(loadingInterval);
-        loading.style.display = 'none';
-        sendBtn.style.display = 'block';
-        cancelBtn.style.display = 'none';
-        input.disabled = false;
-        currentAbortController = null;
-        input.focus(); 
+        delete activeRequests[targetSessionId];
+        renderSidebar(); 
+        
+        if (currentSessionId === targetSessionId) {
+            updateUIState(false);
+            document.getElementById('prompt').focus(); 
+        }
     }
 }
 
 function cancelRequest() {
-    if (currentAbortController) currentAbortController.abort();
-}
-
-function updateHeaderStatus(state) {
-    const dot = document.getElementById('headerStatusDot');
-    const text = document.getElementById('headerStatusText');
-    
-    let dotClass = 'status-unknown';
-    let statusText = 'Disconnected'; 
-
-    if (state === 'testing') {
-        dotClass = 'status-testing';
-        statusText = 'Testing...';
-    } else if (state === 'running') {
-        dotClass = 'status-testing'; 
-        statusText = 'Running...';
-    } else if (state === 'online') {
-        dotClass = 'status-online';
-        statusText = 'Connected';
-    } else if (state === 'offline') {
-        dotClass = 'status-offline';
-        statusText = 'Disconnected';
+    if (activeRequests[currentSessionId]) {
+        activeRequests[currentSessionId].abort();
+        delete activeRequests[currentSessionId];
+        updateUIState(false);
+        renderSidebar();
     }
-
-    dot.className = 'status-dot ' + dotClass;
-    text.textContent = statusText;
 }
 
-function addMessage(text, className, isMarkdown) {
-    addMessageToDOM(text, className, isMarkdown);
-    chatUiHistory.push({ text: text, className: className, isMarkdown: isMarkdown });
-    localStorage.setItem('gp_chat_ui_' + persistentUserId, JSON.stringify(chatUiHistory));
+// --- 6. Message Storage & DOM Rendering ---
+function saveMessageToStorage(targetSessionId, text, className, isMarkdown) {
+    let history = safeParse('gp_chat_ui_' + targetSessionId, []);
+    history.push({ text: text, className: className, isMarkdown: isMarkdown });
+    localStorage.setItem('gp_chat_ui_' + targetSessionId, JSON.stringify(history));
+    
+    if (targetSessionId === currentSessionId) {
+        currentChatUiHistory = history;
+    }
 }
 
 function addMessageToDOM(text, className, isMarkdown) {
@@ -434,50 +312,46 @@ function addMessageToDOM(text, className, isMarkdown) {
 
         msgDiv.querySelectorAll('pre code').forEach((block) => {
             hljs.highlightElement(block);
-            const preNode = block.parentNode;
             const copyBtn = document.createElement('button');
             copyBtn.innerHTML = '📋 Copy';
             copyBtn.className = 'copy-btn';
-            
             copyBtn.onclick = () => {
                 navigator.clipboard.writeText(block.innerText).then(() => {
                     copyBtn.innerHTML = '✅ Copied!';
                     setTimeout(() => { copyBtn.innerHTML = '📋 Copy'; }, 2000);
                 });
             };
-            preNode.appendChild(copyBtn);
+            block.parentNode.appendChild(copyBtn);
         });
 
-        messagesDiv.appendChild(wrapperDiv);
         chartCaches.forEach(c => setTimeout(() => constructSimpleGraph(c.id, c.config), 50));
     } else {
         msgDiv.textContent = text;
-        messagesDiv.appendChild(wrapperDiv);
     }
     
     if (className === 'ai-message' && !text.includes('⚠️ Request cancelled') && !text.includes('Error connecting')) {
         const downloadBtn = document.createElement('button');
         downloadBtn.innerHTML = '⬇️ Download Response PDF';
         downloadBtn.style.cssText = 'margin-top: 5px; background: transparent; border: 1px solid #cbd5e1; color: #475569; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8em; align-self: flex-start; transition: background 0.2s;';
-        downloadBtn.onmouseover = () => downloadBtn.style.backgroundColor = '#f1f5f9';
-        downloadBtn.onmouseout = () => downloadBtn.style.backgroundColor = 'transparent';
         downloadBtn.onclick = () => exportSinglePDF(uniqueId, downloadBtn);
         wrapperDiv.appendChild(downloadBtn);
     }
-
+    
+    messagesDiv.appendChild(wrapperDiv);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
 function constructSimpleGraph(canvasId, configStr) {
     try {
         const cfg = JSON.parse(configStr);
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        const colors = ['#0284c7', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6'];
-        new Chart(ctx, { type: cfg.type || 'bar', data: { labels: cfg.labels, datasets: cfg.datasets.map((d, i) => ({ ...d, backgroundColor: colors[i % colors.length] })) }, options: { responsive: true, maintainAspectRatio: false, animation: false } });
+        new Chart(document.getElementById(canvasId).getContext('2d'), { 
+            type: cfg.type || 'bar', 
+            data: { labels: cfg.labels, datasets: cfg.datasets }, 
+            options: { responsive: true, maintainAspectRatio: false } 
+        });
     } catch (err) {}
 }
 
-// --- 5. PDF Export Logic ---
 function exportSinglePDF(wrapperId, btnElement) {
     const originalText = btnElement.innerHTML;
     btnElement.innerHTML = "⏳ Generating...";
@@ -485,68 +359,194 @@ function exportSinglePDF(wrapperId, btnElement) {
 
     const aiWrapper = document.getElementById(wrapperId);
     const userWrapper = aiWrapper.previousElementSibling;
-    const queryText = (userWrapper && userWrapper.classList.contains('wrapper-user')) ? userWrapper.querySelector('.message').innerText : "Automated Data Query";
+    const queryText = (userWrapper && userWrapper.classList.contains('wrapper-user')) ? userWrapper.querySelector('.message').innerText : "Data Query";
 
     const aiNode = aiWrapper.querySelector('.message').cloneNode(true);
-    
     aiNode.querySelectorAll('.copy-btn').forEach(btn => btn.remove());
     
-    const originalCharts = aiWrapper.querySelectorAll('canvas');
-    const clonedCharts = aiNode.querySelectorAll('canvas');
-    originalCharts.forEach((c, index) => {
-        const img = document.createElement('img');
-        img.src = c.toDataURL('image/png', 1.0); 
-        img.style.maxWidth = '100%'; img.style.border = '1px solid #cbd5e1'; img.style.borderRadius = '6px'; img.style.margin = '15px 0';
-        clonedCharts[index].parentNode.replaceChild(img, clonedCharts[index]);
-    });
-
-    const htmlContent = `
-        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; padding: 20px;">
-            <style>
-                table { width: 100%; border-collapse: collapse; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                th, td { border: 1px solid #e2e8f0; padding: 10px; text-align: left; font-size: 10pt; }
-                th { background-color: #f1f5f9; color: #334155; text-transform: uppercase; font-size: 9pt; }
-                pre { background-color: #1e293b; color: #f8fafc; padding: 15px; border-radius: 6px; overflow-x: auto; }
-                code { font-family: monospace; }
-                h3 { color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
-            </style>
-            <h1 style="border-bottom: 3px solid #0ea5e9; color: #0f172a; padding-bottom: 10px; margin-top:0;">Greenplum Query Response</h1>
-            <h2 style="color: #0369a1; font-size: 14pt; border-left: 4px solid #0ea5e9; padding-left: 10px; margin-top: 25px;">Query: ${queryText}</h2>
-            <div style="margin-top: 20px; font-size: 11pt; line-height: 1.6;">${aiNode.innerHTML}</div>
-        </div>`;
-
-    html2pdf().set({ margin: 0.5, filename: `Query_Response_${Date.now()}.pdf`, image: { type: 'jpeg', quality: 1.0 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(htmlContent).save().then(() => {
+    const htmlContent = `<div style="font-family: sans-serif; padding: 20px;"><h2>Query: ${queryText}</h2>${aiNode.innerHTML}</div>`;
+    html2pdf().from(htmlContent).save().then(() => {
         btnElement.innerHTML = originalText; btnElement.disabled = false;
-    }).catch(err => {
-        btnElement.innerHTML = "❌ Error"; setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
     });
 }
 
-// --- 6. Auto-Connect Logic ---
-async function autoConnect() {
-    const storedConfig = localStorage.getItem('gp_config');
-    if (!storedConfig) return; 
+// --- 7. Input Listeners ---
+let debounceTimeout = null;
+function setupTextarea() {
+    const input = document.getElementById('prompt');
+    const sgBox = document.getElementById('suggestionBox');
 
-    try {
-        const parsed = JSON.parse(storedConfig);
-        const now = Date.now();
+    input.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+        
+        const val = this.value.toLowerCase();
+        
+        if (debounceTimeout) clearTimeout(debounceTimeout);
+        
+        debounceTimeout = setTimeout(() => {
+            sgBox.innerHTML = '';
+            let matches = 0;
+            
+            if (val.trim().length > 0) {
+                const fragment = document.createDocumentFragment();
+                
+                for (let item of suggestionHistory) {
+                    if (matches >= 5) break; 
+                    
+                    if (item.toLowerCase().includes(val)) {
+                        const div = document.createElement('div');
+                        div.className = 'suggestion-item';
+                        div.innerText = item;
+                        div.onclick = () => { 
+                            input.value = item; 
+                            sgBox.style.display = 'none'; 
+                            input.style.height = 'auto';
+                            input.style.height = (input.scrollHeight) + 'px';
+                            input.focus(); 
+                        };
+                        fragment.appendChild(div);
+                        matches++;
+                    }
+                }
+                sgBox.appendChild(fragment);
+            }
+            sgBox.style.display = matches > 0 ? 'block' : 'none';
+        }, 50); 
+    });
 
-        if (now > parsed.expiry) {
-            localStorage.removeItem('gp_config');
-            console.log("Local credentials expired after 30 days.");
-            return; 
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sgBox.style.display = 'none';
+            sendPrompt();
         }
+    });
 
-        const data = parsed.data;
-        if (document.getElementById('provider') && data.provider) document.getElementById('provider').value = data.provider;
-        if (document.getElementById('baseUrl') && data.baseUrl) document.getElementById('baseUrl').value = data.baseUrl;
-        if (document.getElementById('apiKey') && data.apiKey) document.getElementById('apiKey').value = data.apiKey;
-        if (document.getElementById('modelName') && data.modelName) document.getElementById('modelName').value = data.modelName;
-        if (document.getElementById('mcpUrl') && data.mcpUrl) document.getElementById('mcpUrl').value = data.mcpUrl;
-        if (document.getElementById('mcpAuth') && data.mcpAuth) document.getElementById('mcpAuth').value = data.mcpAuth;
+    document.addEventListener('click', (e) => {
+        if (e.target !== input && e.target !== sgBox) sgBox.style.display = 'none';
+    });
+}
 
-        await testConnection();
-    } catch (e) {
-        console.error("Failed to parse saved config", e);
+// --- 8. Settings, Auth & Auto-Connect ---
+function updateHeaderStatus(state) {
+    const dot = document.getElementById('headerStatusDot');
+    const text = document.getElementById('headerStatusText');
+    if (!dot || !text) return; // Failsafe
+    
+    const states = {
+        'testing': ['status-testing', 'Testing...'],
+        'running': ['status-testing', 'Running...'],
+        'online': ['status-online', 'Connected'],
+        'offline': ['status-offline', 'Disconnected']
+    };
+    dot.className = 'status-dot ' + (states[state]?.[0] || 'status-unknown');
+    text.textContent = states[state]?.[1] || 'Disconnected';
+}
+
+function attemptOpenSettings() {
+    if (sessionStorage.getItem('gp_admin') === 'true') openSettings();
+    else document.getElementById('loginModal').style.display = 'flex';
+}
+function closeLoginModal() { document.getElementById('loginModal').style.display = 'none'; }
+async function performLogin() {
+    const u = document.getElementById('authUsername').value.trim();
+    const p = document.getElementById('authPassword').value.trim();
+    if(u === 'admin' && p === 'admin') { sessionStorage.setItem('gp_admin', 'true'); closeLoginModal(); openSettings(); }
+    else document.getElementById('loginError').style.display = 'block';
+}
+async function openSettings() {
+    try {
+        const res = await fetch('/api/settings');
+        const set = await res.json();
+        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+            if(document.getElementById(id) && set[id]) document.getElementById(id).value = set[id];
+        });
+    } catch(e) {}
+    document.getElementById('settingsModal').style.display = 'flex';
+}
+function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
+async function saveSettings() {
+    const payload = {};
+    ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => payload[id] = document.getElementById(id).value.trim());
+    localStorage.setItem('gp_config', JSON.stringify({ data: payload, expiry: Date.now() + 2592000000 }));
+    await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    closeSettings(); testConnection();
+}
+async function testConnection() {
+    updateHeaderStatus('testing');
+    const stored = safeParse('gp_config', { data: {} });
+    try {
+        const res = await fetch('/api/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stored.data) });
+        const data = await res.json();
+        updateHeaderStatus(data.status === 'success' ? 'online' : 'offline');
+    } catch(e) { updateHeaderStatus('offline'); }
+}
+async function autoConnect() {
+    const stored = safeParse('gp_config', null);
+    if (stored && Date.now() < stored.expiry) testConnection();
+}
+
+function toggleProviderFields() {
+    const provider = document.getElementById('provider').value;
+    const baseUrlLabel = document.getElementById('baseUrlLabel');
+    const baseUrlHelp = document.getElementById('baseUrlHelp');
+    const apiKeyHelp = document.getElementById('apiKeyHelp');
+    const modelNameHelp = document.getElementById('modelNameHelp');
+
+    if (!baseUrlLabel) return; // Failsafe
+
+    if (provider === 'ollama') {
+        baseUrlLabel.textContent = 'Ollama Server URL';
+        baseUrlHelp.textContent = 'Format: http://localhost:11434';
+        apiKeyHelp.textContent = 'Leave blank (Ollama does not require an API key)';
+        modelNameHelp.textContent = 'Format: qwen3:30b, llama3';
+    } else if (provider === 'openai') {
+        baseUrlLabel.textContent = 'OpenAI Compatible Base URL';
+        baseUrlHelp.textContent = 'Format: https://api.openai.com/v1';
+        apiKeyHelp.textContent = 'Format: sk-... (Enter API Key if required)';
+        modelNameHelp.textContent = 'Format: gpt-4o, llama-3.1-70b';
+    } else if (provider === 'anthropic') {
+        baseUrlLabel.textContent = 'Anthropic Base URL';
+        baseUrlHelp.textContent = 'Format: https://api.anthropic.com/v1';
+        apiKeyHelp.textContent = 'Format: sk-ant-...';
+        modelNameHelp.textContent = 'Format: claude-3-5-sonnet-20241022';
+    } else {
+        baseUrlLabel.textContent = 'Endpoint / Base URL';
+        baseUrlHelp.textContent = 'Select a provider to see format';
+        apiKeyHelp.textContent = 'Select a provider to see format';
+        modelNameHelp.textContent = 'Select a provider to see format';
     }
+}
+
+function handleConfigUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result;
+        const config = {};
+        content.split('\n').forEach(line => {
+            line = line.trim();
+            if (line && !line.startsWith('#')) {
+                const splitIdx = line.indexOf('=');
+                if (splitIdx > 0) {
+                    config[line.substring(0, splitIdx).trim()] = line.substring(splitIdx + 1).trim();
+                }
+            }
+        });
+        if (config.provider) document.getElementById('provider').value = config.provider.toLowerCase();
+        if (config.baseUrl) document.getElementById('baseUrl').value = config.baseUrl;
+        if (config.apiKey) document.getElementById('apiKey').value = config.apiKey;
+        if (config.modelName) document.getElementById('modelName').value = config.modelName;
+        if (config.mcpUrl) document.getElementById('mcpUrl').value = config.mcpUrl;
+        if (config.mcpAuth) document.getElementById('mcpAuth').value = config.mcpAuth;
+
+        toggleProviderFields();
+        const testResult = document.getElementById('testResult');
+        testResult.style.display = 'block'; testResult.className = 'test-result test-success';
+        testResult.textContent = '✅ File loaded! Review the fields and click "Save Configuration".';
+        event.target.value = '';
+    };
+    reader.readAsText(file);
 }
