@@ -2,6 +2,15 @@
 let suggestionHistory = new Set();
 let currentAbortController = null;
 
+// Persistent User ID & UI History
+let persistentUserId = localStorage.getItem('gp_user_id');
+if (!persistentUserId) {
+    persistentUserId = 'user-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    localStorage.setItem('gp_user_id', persistentUserId);
+}
+
+let chatUiHistory = JSON.parse(localStorage.getItem('gp_chat_ui_' + persistentUserId) || '[]');
+
 window.onload = function() {
     const savedHistory = JSON.parse(localStorage.getItem('gp_history') || '[]');
     suggestionHistory = new Set([
@@ -11,6 +20,15 @@ window.onload = function() {
         ...savedHistory
     ]);
     setupTextarea();
+
+    if (chatUiHistory.length > 0) {
+        document.getElementById('messages').innerHTML = ''; 
+        chatUiHistory.forEach(msg => {
+            addMessageToDOM(msg.text, msg.className, msg.isMarkdown);
+        });
+    }
+
+    autoConnect();
 };
 
 function setupTextarea() {
@@ -59,13 +77,28 @@ function setupTextarea() {
     });
 }
 
-function clearChat() {
+async function clearChat() {
     const messagesDiv = document.getElementById('messages');
+    
     messagesDiv.innerHTML = `
         <div class="message-wrapper wrapper-ai">
             <div class="message ai-message">Chat history cleared. How can I help you?</div>
         </div>
     `;
+    
+    chatUiHistory = [];
+    localStorage.removeItem('gp_chat_ui_' + persistentUserId);
+    
+    try {
+        await fetch('/api/chat/clear', { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: persistentUserId })
+        });
+        console.log("Server memory successfully wiped.");
+    } catch (e) {
+        console.error("Failed to clear backend memory context", e);
+    }
 }
 
 // --- 2. Security Gatekeeper Logic ---
@@ -151,11 +184,21 @@ async function saveSettings() {
         mcpUrl: document.getElementById('mcpUrl').value.trim(),
         mcpAuth: document.getElementById('mcpAuth').value.trim()
     };
+
+    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
+    const storageData = {
+        data: payload,
+        expiry: Date.now() + thirtyDaysInMs
+    };
+    localStorage.setItem('gp_config', JSON.stringify(storageData));
+
     await fetch('/api/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
+    
     closeSettings();
+    testConnection(); 
 }
 
 function toggleProviderFields() {
@@ -224,28 +267,41 @@ function handleConfigUpload(event) {
 async function testConnection() {
     const testBtn = document.getElementById('testBtn');
     const resultDiv = document.getElementById('testResult');
-    testBtn.disabled = true; testBtn.textContent = 'Testing...';
+    if(testBtn) { testBtn.disabled = true; testBtn.textContent = 'Testing...'; }
     updateHeaderStatus('testing');
     
-    resultDiv.className = 'test-result'; resultDiv.textContent = 'Connecting to AI provider...'; resultDiv.style.display = 'block';
+    if(resultDiv) { resultDiv.className = 'test-result'; resultDiv.textContent = 'Connecting to AI provider...'; resultDiv.style.display = 'block'; }
 
-    const payload = {
-        provider: document.getElementById('provider').value, baseUrl: document.getElementById('baseUrl').value.trim(),
-        apiKey: document.getElementById('apiKey').value.trim(), modelName: document.getElementById('modelName').value.trim()
-    };
+    let providerVal = document.getElementById('provider') ? document.getElementById('provider').value : null;
+    let baseUrlVal = document.getElementById('baseUrl') ? document.getElementById('baseUrl').value.trim() : null;
+    let apiKeyVal = document.getElementById('apiKey') ? document.getElementById('apiKey').value.trim() : null;
+    let modelNameVal = document.getElementById('modelName') ? document.getElementById('modelName').value.trim() : null;
+
+    if (!providerVal) {
+        const stored = JSON.parse(localStorage.getItem('gp_config') || '{}');
+        if (stored.data) {
+            providerVal = stored.data.provider; baseUrlVal = stored.data.baseUrl;
+            apiKeyVal = stored.data.apiKey; modelNameVal = stored.data.modelName;
+        }
+    }
+
+    const payload = { provider: providerVal, baseUrl: baseUrlVal, apiKey: apiKeyVal, modelName: modelNameVal };
 
     try {
         const response = await fetch('/api/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await response.json();
         if (data.status === 'success') {
-            resultDiv.textContent = '✅ ' + data.message; resultDiv.className = 'test-result test-success'; updateHeaderStatus('online');
+            if(resultDiv) { resultDiv.textContent = '✅ ' + data.message; resultDiv.className = 'test-result test-success'; }
+            updateHeaderStatus('online');
         } else {
-            resultDiv.textContent = '❌ ' + data.message; resultDiv.className = 'test-result test-error'; updateHeaderStatus('offline');
+            if(resultDiv) { resultDiv.textContent = '❌ ' + data.message; resultDiv.className = 'test-result test-error'; }
+            updateHeaderStatus('offline');
         }
     } catch (error) {
-        resultDiv.textContent = '❌ Network error.'; resultDiv.className = 'test-result test-error'; updateHeaderStatus('offline');
+        if(resultDiv) { resultDiv.textContent = '❌ Network error.'; resultDiv.className = 'test-result test-error'; }
+        updateHeaderStatus('offline');
     } finally {
-        testBtn.disabled = false; testBtn.textContent = 'Test Connection';
+        if(testBtn) { testBtn.disabled = false; testBtn.textContent = 'Test Connection'; }
     }
 }
 
@@ -280,7 +336,8 @@ async function sendPrompt() {
     try {
         const response = await fetch('/api/chat', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt }), signal: currentAbortController.signal
+            body: JSON.stringify({ prompt: prompt, userId: persistentUserId }), 
+            signal: currentAbortController.signal
         });
         
         const data = await response.json();
@@ -313,13 +370,12 @@ function cancelRequest() {
     if (currentAbortController) currentAbortController.abort();
 }
 
-// UPDATED: Now uses "Connected" and "Disconnected" terminology
 function updateHeaderStatus(state) {
     const dot = document.getElementById('headerStatusDot');
     const text = document.getElementById('headerStatusText');
     
     let dotClass = 'status-unknown';
-    let statusText = 'Disconnected'; // Default state
+    let statusText = 'Disconnected'; 
 
     if (state === 'testing') {
         dotClass = 'status-testing';
@@ -340,6 +396,12 @@ function updateHeaderStatus(state) {
 }
 
 function addMessage(text, className, isMarkdown) {
+    addMessageToDOM(text, className, isMarkdown);
+    chatUiHistory.push({ text: text, className: className, isMarkdown: isMarkdown });
+    localStorage.setItem('gp_chat_ui_' + persistentUserId, JSON.stringify(chatUiHistory));
+}
+
+function addMessageToDOM(text, className, isMarkdown) {
     const messagesDiv = document.getElementById('messages');
     const wrapperDiv = document.createElement('div');
     const uniqueId = 'msg-' + Date.now();
@@ -393,7 +455,7 @@ function addMessage(text, className, isMarkdown) {
         messagesDiv.appendChild(wrapperDiv);
     }
     
-    if (className === 'ai-message' && !text.includes('⚠️ Request cancelled')) {
+    if (className === 'ai-message' && !text.includes('⚠️ Request cancelled') && !text.includes('Error connecting')) {
         const downloadBtn = document.createElement('button');
         downloadBtn.innerHTML = '⬇️ Download Response PDF';
         downloadBtn.style.cssText = 'margin-top: 5px; background: transparent; border: 1px solid #cbd5e1; color: #475569; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8em; align-self: flex-start; transition: background 0.2s;';
@@ -458,4 +520,33 @@ function exportSinglePDF(wrapperId, btnElement) {
     }).catch(err => {
         btnElement.innerHTML = "❌ Error"; setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
     });
+}
+
+// --- 6. Auto-Connect Logic ---
+async function autoConnect() {
+    const storedConfig = localStorage.getItem('gp_config');
+    if (!storedConfig) return; 
+
+    try {
+        const parsed = JSON.parse(storedConfig);
+        const now = Date.now();
+
+        if (now > parsed.expiry) {
+            localStorage.removeItem('gp_config');
+            console.log("Local credentials expired after 30 days.");
+            return; 
+        }
+
+        const data = parsed.data;
+        if (document.getElementById('provider') && data.provider) document.getElementById('provider').value = data.provider;
+        if (document.getElementById('baseUrl') && data.baseUrl) document.getElementById('baseUrl').value = data.baseUrl;
+        if (document.getElementById('apiKey') && data.apiKey) document.getElementById('apiKey').value = data.apiKey;
+        if (document.getElementById('modelName') && data.modelName) document.getElementById('modelName').value = data.modelName;
+        if (document.getElementById('mcpUrl') && data.mcpUrl) document.getElementById('mcpUrl').value = data.mcpUrl;
+        if (document.getElementById('mcpAuth') && data.mcpAuth) document.getElementById('mcpAuth').value = data.mcpAuth;
+
+        await testConnection();
+    } catch (e) {
+        console.error("Failed to parse saved config", e);
+    }
 }

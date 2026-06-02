@@ -5,20 +5,19 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.system.ApplicationHome;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 
 @SpringBootApplication
 public class GreenplumAgentApplication {
 
     public static void main(String[] args) {
-ApplicationHome home = new ApplicationHome(GreenplumAgentApplication.class);
+        
+        // Dynamically determine the application's running directory to place logs next to the JAR file
+        ApplicationHome home = new ApplicationHome(GreenplumAgentApplication.class);
         File dir = home.getDir();
         String jarDirectory = (dir != null) ? dir.getAbsolutePath() : System.getProperty("user.dir");
         String logFilePath = jarDirectory + File.separator + "greenplum-agent.log";
 
-        // Feed the path directly into the Logback XML
+        // Feed the resolved path directly into the Logback XML configuration
         System.setProperty("AGENT_LOG_PATH", logFilePath);
 
         System.out.println("=========================================================");

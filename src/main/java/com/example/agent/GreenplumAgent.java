@@ -4,6 +4,11 @@ import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 
+
+/**
+ * LangChain4j declarative AI service interface.
+ * Defines the strict system instructions and behavioral guardrails for the agent.
+ */
 public interface GreenplumAgent {
    @SystemMessage({
 

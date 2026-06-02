@@ -12,9 +12,13 @@ import org.springframework.http.MediaType;
 
 import java.util.Map;
 
-// Removed @Component to allow dynamic instantiation per request
+/**
+ * Provides the AI Agent with tools to interact with the Greenplum database 
+ * via a Model Context Protocol (MCP) server.
+ */
 public class GreenplumMcpTools {
 
+    // Wire up SLF4J to use your logback-spring.xml
     private static final Logger log = LoggerFactory.getLogger(GreenplumMcpTools.class);
     
     private final RestTemplate restTemplate = new RestTemplate();
@@ -23,7 +27,6 @@ public class GreenplumMcpTools {
     private final String mcpServerUrl;
     private final String mcpAuthHeader;
 
-    // Constructor dynamically accepts UI configurations
     public GreenplumMcpTools(String mcpServerUrl, String mcpAuthHeader) {
         this.mcpServerUrl = mcpServerUrl;
         this.mcpAuthHeader = mcpAuthHeader;
@@ -61,10 +64,7 @@ public class GreenplumMcpTools {
                 "jsonrpc", "2.0",
                 "id", rpcId,
                 "method", "tools/call",
-                "params", Map.of(
-                    "name", toolName,
-                    "arguments", arguments
-                )
+                "params", Map.of("name", toolName, "arguments", arguments)
             );
 
             String requestBody = objectMapper.writeValueAsString(payload);
