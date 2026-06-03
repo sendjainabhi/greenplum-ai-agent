@@ -21,9 +21,7 @@ import java.util.Properties;
 public class ChatController {
 
     private static final String CONFIG_FILE = "agent-config.properties";
-    
     private volatile Properties cachedConfig = null; 
-    
     private final ChatMemoryProvider memoryProvider;
     private final ChatMemoryStore memoryStore;
 
@@ -33,17 +31,12 @@ public class ChatController {
     }
 
     private Properties loadConfig() {
-        if (cachedConfig != null) {
-            return cachedConfig;
-        }
-        
+        if (cachedConfig != null) return cachedConfig;
         Properties props = new Properties();
         try {
             File f = new File(CONFIG_FILE);
             if (f.exists()) props.load(new FileInputStream(f));
-        } catch (Exception e) { 
-            e.printStackTrace(); 
-        }
+        } catch (Exception e) { e.printStackTrace(); }
         cachedConfig = props; 
         return props;
     }
@@ -70,17 +63,20 @@ public class ChatController {
     public Map<String, String> chat(@RequestBody Map<String, String> request) {
         String prompt = request.get("prompt");
         String userId = request.get("userId"); 
-        if (userId == null || userId.trim().isEmpty()) {
-            userId = "default-user";
-        }
+        if (userId == null || userId.trim().isEmpty()) userId = "default-user";
         
         Properties config = loadConfig();
+        
         String provider = config.getProperty("provider", "ollama").toLowerCase();
-        String modelName = config.getProperty("modelName", "qwen3:30b");
+        String modelName = config.getProperty("modelName", "");
         String apiKey = config.getProperty("apiKey", "");
         String baseUrl = config.getProperty("baseUrl", "");
         String mcpUrl = config.getProperty("mcpUrl", "");
         String mcpAuth = config.getProperty("mcpAuth", "");
+
+        if (modelName == null || modelName.trim().isEmpty()) {
+            return Map.of("response", "⚠️ **Configuration Required:** Please click the Settings button and configure an AI Provider and Model Name before chatting.");
+        }
 
         ChatLanguageModel model = buildModel(provider, modelName, apiKey, baseUrl, 300);
         GreenplumMcpTools mcpTools = new GreenplumMcpTools(mcpUrl, mcpAuth);
@@ -91,7 +87,6 @@ public class ChatController {
                 .tools(mcpTools)
                 .build();
         
-        // THE FIX: Stricter enforcement to guarantee actual tool execution
         String enforcedPrompt = prompt + "\n\n[SYSTEM REMINDER: 1. You MUST actively use the `executeQuery` tool to fetch the actual data. Do not just write SQL without running it. 2. In your final response, display the exact SQL query used inside a ```sql markdown block, followed by the formatted data results.]";
         
         String response = agent.chat(userId, enforcedPrompt);
@@ -101,21 +96,24 @@ public class ChatController {
     @PostMapping("/chat/clear")
     public Map<String, Boolean> clearChat(@RequestBody Map<String, String> request) {
         String userId = request.get("userId");
-        if (userId != null && !userId.trim().isEmpty()) {
-            memoryStore.deleteMessages(userId);
-        }
+        if (userId != null && !userId.trim().isEmpty()) memoryStore.deleteMessages(userId);
         return Map.of("success", true);
     }
 
     @PostMapping("/test")
     public Map<String, String> testConnection(@RequestBody Map<String, String> request) {
         String provider = request.getOrDefault("provider", "ollama").toLowerCase();
-        String modelName = request.getOrDefault("modelName", "qwen3:30b");
+        String modelName = request.getOrDefault("modelName", "");
         String apiKey = request.get("apiKey");
         String baseUrl = request.get("baseUrl");
 
+        if (modelName == null || modelName.trim().isEmpty()) {
+            return Map.of("status", "error", "message", "Model Name cannot be empty.");
+        }
+
         try {
-            ChatLanguageModel model = buildModel(provider, modelName, apiKey, baseUrl, 15);
+            // Allow 90 seconds max for testing
+            ChatLanguageModel model = buildModel(provider, modelName, apiKey, baseUrl, 90);
             String response = model.generate("Respond with the exact word: OK");
             return Map.of("status", "success", "message", "Connection Successful! AI responded: " + response);
         } catch (Exception e) {
@@ -124,22 +122,29 @@ public class ChatController {
     }
 
     private ChatLanguageModel buildModel(String provider, String modelName, String apiKey, String baseUrl, int timeoutSeconds) {
+        Duration timeout = Duration.ofSeconds(timeoutSeconds);
+
         switch (provider) {
             case "openai":
                 var openAiBuilder = OpenAiChatModel.builder()
-                        .apiKey(apiKey).modelName(modelName).temperature(0.0).timeout(Duration.ofSeconds(timeoutSeconds));
+                        .apiKey(apiKey).modelName(modelName).temperature(0.0)
+                        .timeout(timeout).maxRetries(1); // THE FIX: Prevent silent retry loops
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) openAiBuilder.baseUrl(baseUrl);
                 return openAiBuilder.build();
+                
             case "anthropic":
                 var anthropicBuilder = AnthropicChatModel.builder()
-                        .apiKey(apiKey).modelName(modelName).temperature(0.0).timeout(Duration.ofSeconds(timeoutSeconds));
+                        .apiKey(apiKey).modelName(modelName).temperature(0.0)
+                        .timeout(timeout).maxRetries(1); // THE FIX: Prevent silent retry loops
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) anthropicBuilder.baseUrl(baseUrl);
                 return anthropicBuilder.build();
+                
             case "ollama":
             default:
                 String ollamaUrl = (baseUrl != null && !baseUrl.trim().isEmpty()) ? baseUrl : "http://localhost:11434";
                 return OllamaChatModel.builder()
-                        .baseUrl(ollamaUrl).modelName(modelName).temperature(0.0).timeout(Duration.ofSeconds(timeoutSeconds))
+                        .baseUrl(ollamaUrl).modelName(modelName).temperature(0.0)
+                        .timeout(timeout).maxRetries(1) // THE FIX: Prevent silent retry loops
                         .build();
         }
     }

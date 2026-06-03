@@ -4,7 +4,6 @@ function safeParse(key, defaultVal) {
         const val = localStorage.getItem(key);
         return val ? JSON.parse(val) : defaultVal;
     } catch (e) {
-        console.warn(`[RECOVERY] Wiping corrupted memory key: ${key}`);
         localStorage.removeItem(key);
         return defaultVal;
     }
@@ -14,58 +13,43 @@ function safeParse(key, defaultVal) {
 let activeRequests = {}; 
 let suggestionHistory = new Set();
 let chatSessions = safeParse('gp_sessions', []);
-if (!Array.isArray(chatSessions)) chatSessions = []; // Enforce array type
+if (!Array.isArray(chatSessions)) chatSessions = [];
 let currentSessionId = localStorage.getItem('gp_current_session');
 let currentChatUiHistory = [];
 
 window.onload = function() {
     try {
         const savedHistory = safeParse('gp_history', []);
-        const historyArray = Array.isArray(savedHistory) ? savedHistory : [];
-        
         suggestionHistory = new Set([
             "Check bloat in the 'sales' table",
             "Show cluster status",
-            "List all users in the 'public' schema",
-            ...historyArray
+            ...Array.isArray(savedHistory) ? savedHistory : []
         ]);
-
         setupTextarea();
         initSessions();
         autoConnect();
-    } catch (err) {
-        console.error("Critical Application Load Error: ", err);
-    }
+    } catch (err) {}
 };
 
-// --- 2. Multi-Session Logic ---
 function initSessions() {
-    if (!currentSessionId || chatSessions.length === 0) {
-        createNewChat(false);
-    } else {
-        loadSession(currentSessionId);
-    }
+    if (!currentSessionId || chatSessions.length === 0) createNewChat(false);
+    else loadSession(currentSessionId);
 }
 
 async function createNewChat(render = true) {
     if (chatSessions.length >= 4) {
         const oldestSession = chatSessions.pop();
         localStorage.removeItem('gp_chat_ui_' + oldestSession.id);
-        
         if (activeRequests[oldestSession.id]) {
             activeRequests[oldestSession.id].abort();
             delete activeRequests[oldestSession.id];
         }
-
         try {
             await fetch('/api/chat/clear', { 
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId: oldestSession.id }) 
             });
-        } catch (e) {
-            console.error("Failed to wipe oldest backend memory context", e);
-        }
+        } catch (e) {}
     }
 
     const newId = 'session-' + Date.now();
@@ -85,43 +69,31 @@ async function createNewChat(render = true) {
 function loadSession(sessionId) {
     currentSessionId = sessionId;
     localStorage.setItem('gp_current_session', currentSessionId);
-    
     currentChatUiHistory = safeParse('gp_chat_ui_' + currentSessionId, []);
     
     const messagesDiv = document.getElementById('messages');
     messagesDiv.innerHTML = ''; 
     
     if (currentChatUiHistory.length === 0) {
-        messagesDiv.innerHTML = `
-            <div class="message-wrapper wrapper-ai">
-                <div class="message ai-message">Hello! I am connected to the server. How can I help you today?</div>
-            </div>`;
+        messagesDiv.innerHTML = `<div class="message-wrapper wrapper-ai"><div class="message ai-message">Hello! I am connected to the server. How can I help you today?</div></div>`;
     } else {
-        currentChatUiHistory.forEach(msg => {
-            addMessageToDOM(msg.text, msg.className, msg.isMarkdown);
-        });
+        currentChatUiHistory.forEach(msg => addMessageToDOM(msg.text, msg.className, msg.isMarkdown));
     }
     
-    const isRunning = !!activeRequests[currentSessionId];
-    updateUIState(isRunning);
-    
+    updateUIState(!!activeRequests[currentSessionId]);
     renderSidebar();
 }
 
 function renderSidebar() {
     const chatList = document.getElementById('chatList');
-    if (!chatList) return; // Failsafe
+    if (!chatList) return; 
     chatList.innerHTML = '';
     
     chatSessions.forEach(session => {
         const div = document.createElement('div');
         div.className = `chat-item ${session.id === currentSessionId ? 'active' : ''}`;
         div.textContent = session.title;
-        
-        if (activeRequests[session.id]) {
-            div.innerHTML = `⏳ ` + session.title;
-        }
-        
+        if (activeRequests[session.id]) div.innerHTML = `⏳ ` + session.title;
         div.onclick = () => loadSession(session.id);
         chatList.appendChild(div);
     });
@@ -136,43 +108,26 @@ function updateSessionTitle(firstPrompt, targetSessionId) {
     }
 }
 
-// --- 3. Synchronized Memory Wipe ---
 async function clearChat() {
     if (activeRequests[currentSessionId]) {
         activeRequests[currentSessionId].abort();
         delete activeRequests[currentSessionId];
         updateUIState(false);
     }
-
-    const messagesDiv = document.getElementById('messages');
-    messagesDiv.innerHTML = `
-        <div class="message-wrapper wrapper-ai">
-            <div class="message ai-message">Chat history cleared. How can I help you?</div>
-        </div>
-    `;
-    
+    document.getElementById('messages').innerHTML = `<div class="message-wrapper wrapper-ai"><div class="message ai-message">Chat history cleared. How can I help you?</div></div>`;
     currentChatUiHistory = [];
     localStorage.removeItem('gp_chat_ui_' + currentSessionId);
-    
     try {
-        await fetch('/api/chat/clear', { 
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: currentSessionId }) 
-        });
-    } catch (e) {
-        console.error("Failed to clear backend memory context", e);
-    }
+        await fetch('/api/chat/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: currentSessionId }) });
+    } catch (e) {}
 }
 
-// --- 4. UI State Management ---
 function updateUIState(isRunning) {
     const input = document.getElementById('prompt');
     const sendBtn = document.getElementById('sendBtn');
     const cancelBtn = document.getElementById('cancelBtn');
     const loading = document.getElementById('loading');
-
-    if (!input || !sendBtn || !cancelBtn || !loading) return; // Failsafe
+    if (!input || !sendBtn || !cancelBtn || !loading) return; 
 
     if (isRunning) {
         input.disabled = true;
@@ -190,14 +145,12 @@ function updateUIState(isRunning) {
     }
 }
 
-// --- 5. Chat Logic & API Calling ---
 async function sendPrompt() {
     const input = document.getElementById('prompt');
     const prompt = input.value.trim();
     if (!prompt) return;
 
     const targetSessionId = currentSessionId;
-
     saveMessageToStorage(targetSessionId, prompt, 'user-message', false);
     updateSessionTitle(prompt, targetSessionId); 
     
@@ -216,9 +169,7 @@ async function sendPrompt() {
     const loadingInterval = setInterval(() => {
         if (currentSessionId === targetSessionId) {
             const loadingEl = document.getElementById('loading');
-            if (loadingEl && loadingEl.style.display === 'block') {
-                loadingEl.textContent = loadingPhases[phaseIndex++ % loadingPhases.length];
-            }
+            if (loadingEl && loadingEl.style.display === 'block') loadingEl.textContent = loadingPhases[phaseIndex++ % loadingPhases.length];
         }
     }, 2000);
 
@@ -231,10 +182,7 @@ async function sendPrompt() {
         
         const data = await response.json();
         saveMessageToStorage(targetSessionId, data.response, 'ai-message', true);
-        
-        if (currentSessionId === targetSessionId) {
-            addMessageToDOM(data.response, 'ai-message', true);
-        }
+        if (currentSessionId === targetSessionId) addMessageToDOM(data.response, 'ai-message', true);
         
         suggestionHistory.add(prompt);
         localStorage.setItem('gp_history', JSON.stringify(Array.from(suggestionHistory)));
@@ -242,7 +190,6 @@ async function sendPrompt() {
     } catch (error) {
         const errorText = error.name === 'AbortError' ? '⚠️ Request cancelled by user.' : 'Error connecting to backend API.';
         saveMessageToStorage(targetSessionId, errorText, 'ai-message', false);
-        
         if (currentSessionId === targetSessionId) {
             addMessageToDOM(errorText, 'ai-message', false);
             if (error.name !== 'AbortError') updateHeaderStatus('offline');
@@ -251,7 +198,6 @@ async function sendPrompt() {
         clearInterval(loadingInterval);
         delete activeRequests[targetSessionId];
         renderSidebar(); 
-        
         if (currentSessionId === targetSessionId) {
             updateUIState(false);
             document.getElementById('prompt').focus(); 
@@ -268,15 +214,11 @@ function cancelRequest() {
     }
 }
 
-// --- 6. Message Storage & DOM Rendering ---
 function saveMessageToStorage(targetSessionId, text, className, isMarkdown) {
     let history = safeParse('gp_chat_ui_' + targetSessionId, []);
     history.push({ text: text, className: className, isMarkdown: isMarkdown });
     localStorage.setItem('gp_chat_ui_' + targetSessionId, JSON.stringify(history));
-    
-    if (targetSessionId === currentSessionId) {
-        currentChatUiHistory = history;
-    }
+    if (targetSessionId === currentSessionId) currentChatUiHistory = history;
 }
 
 function addMessageToDOM(text, className, isMarkdown) {
@@ -302,7 +244,6 @@ function addMessageToDOM(text, className, isMarkdown) {
         }
         
         msgDiv.innerHTML = marked.parse(processedText);
-        
         msgDiv.querySelectorAll('table').forEach(table => {
             const responsiveWrap = document.createElement('div');
             responsiveWrap.className = 'table-responsive';
@@ -345,9 +286,7 @@ function constructSimpleGraph(canvasId, configStr) {
     try {
         const cfg = JSON.parse(configStr);
         new Chart(document.getElementById(canvasId).getContext('2d'), { 
-            type: cfg.type || 'bar', 
-            data: { labels: cfg.labels, datasets: cfg.datasets }, 
-            options: { responsive: true, maintainAspectRatio: false } 
+            type: cfg.type || 'bar', data: { labels: cfg.labels, datasets: cfg.datasets }, options: { responsive: true, maintainAspectRatio: false } 
         });
     } catch (err) {}
 }
@@ -370,7 +309,6 @@ function exportSinglePDF(wrapperId, btnElement) {
     });
 }
 
-// --- 7. Input Listeners ---
 let debounceTimeout = null;
 function setupTextarea() {
     const input = document.getElementById('prompt');
@@ -381,19 +319,15 @@ function setupTextarea() {
         this.style.height = (this.scrollHeight) + 'px';
         
         const val = this.value.toLowerCase();
-        
         if (debounceTimeout) clearTimeout(debounceTimeout);
         
         debounceTimeout = setTimeout(() => {
             sgBox.innerHTML = '';
             let matches = 0;
-            
             if (val.trim().length > 0) {
                 const fragment = document.createDocumentFragment();
-                
                 for (let item of suggestionHistory) {
                     if (matches >= 5) break; 
-                    
                     if (item.toLowerCase().includes(val)) {
                         const div = document.createElement('div');
                         div.className = 'suggestion-item';
@@ -428,18 +362,11 @@ function setupTextarea() {
     });
 }
 
-// --- 8. Settings, Auth & Auto-Connect ---
 function updateHeaderStatus(state) {
     const dot = document.getElementById('headerStatusDot');
     const text = document.getElementById('headerStatusText');
-    if (!dot || !text) return; // Failsafe
-    
-    const states = {
-        'testing': ['status-testing', 'Testing...'],
-        'running': ['status-testing', 'Running...'],
-        'online': ['status-online', 'Connected'],
-        'offline': ['status-offline', 'Disconnected']
-    };
+    if (!dot || !text) return; 
+    const states = { 'testing': ['status-testing', 'Testing...'], 'running': ['status-testing', 'Running...'], 'online': ['status-online', 'Connected'], 'offline': ['status-offline', 'Disconnected'] };
     dot.className = 'status-dot ' + (states[state]?.[0] || 'status-unknown');
     text.textContent = states[state]?.[1] || 'Disconnected';
 }
@@ -455,36 +382,121 @@ async function performLogin() {
     if(u === 'admin' && p === 'admin') { sessionStorage.setItem('gp_admin', 'true'); closeLoginModal(); openSettings(); }
     else document.getElementById('loginError').style.display = 'block';
 }
+
 async function openSettings() {
+    const testResult = document.getElementById('testResult');
+    if (testResult) { testResult.style.display = 'none'; testResult.className = 'test-result'; testResult.textContent = ''; }
     try {
-        const res = await fetch('/api/settings');
-        const set = await res.json();
+        const stored = safeParse('gp_config', { data: {} });
+
         ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
-            if(document.getElementById(id) && set[id]) document.getElementById(id).value = set[id];
+            if(document.getElementById(id) && stored.data[id]) document.getElementById(id).value = stored.data[id];
         });
+        toggleProviderFields();
     } catch(e) {}
     document.getElementById('settingsModal').style.display = 'flex';
 }
+
 function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
+
 async function saveSettings() {
-    const payload = {};
-    ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => payload[id] = document.getElementById(id).value.trim());
-    localStorage.setItem('gp_config', JSON.stringify({ data: payload, expiry: Date.now() + 2592000000 }));
-    await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    closeSettings(); testConnection();
-}
-async function testConnection() {
-    updateHeaderStatus('testing');
-    const stored = safeParse('gp_config', { data: {} });
+    const saveBtn = document.querySelector('.btn-save');
+    const originalText = saveBtn.textContent;
+    saveBtn.textContent = '⏳ Saving...';
+    saveBtn.disabled = true;
+
     try {
-        const res = await fetch('/api/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stored.data) });
+        const payload = {};
+        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) payload[id] = element.value.trim();
+        });
+        
+        localStorage.setItem('gp_config', JSON.stringify({ data: payload, expiry: Date.now() + 2592000000 }));
+        
+        const response = await fetch('/api/settings', { 
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+        });
+
+        if (!response.ok) throw new Error("Server rejected");
+        closeSettings(); 
+        testConnection(false); 
+    } catch (error) {
+        const testResult = document.getElementById('testResult');
+        if (testResult) {
+            testResult.style.display = 'block';
+            testResult.className = 'test-result test-error';
+            testResult.textContent = '❌ Failed to save configuration to server.';
+        }
+    } finally {
+        saveBtn.textContent = originalText;
+        saveBtn.disabled = false;
+    }
+}
+
+async function testConnection(isFromModal = false) {
+    updateHeaderStatus('testing');
+    
+    let payload = {};
+    if (isFromModal) {
+        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+            if(document.getElementById(id)) payload[id] = document.getElementById(id).value.trim();
+        });
+        
+        const testResult = document.getElementById('testResult');
+        if (testResult) {
+            testResult.style.display = 'block';
+            testResult.className = 'test-result';
+            testResult.textContent = '⏳ Testing connection... (Awaiting server response)';
+        }
+    } else {
+        const stored = safeParse('gp_config', { data: {} });
+        payload = stored.data || {};
+        if (Object.keys(payload).length === 0) {
+            updateHeaderStatus('offline');
+            return;
+        }
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 seconds hard stop
+
+        const res = await fetch('/api/test', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
         const data = await res.json();
         updateHeaderStatus(data.status === 'success' ? 'online' : 'offline');
-    } catch(e) { updateHeaderStatus('offline'); }
+        
+        if (isFromModal) {
+            const testResult = document.getElementById('testResult');
+            if (testResult) {
+                testResult.className = 'test-result ' + (data.status === 'success' ? 'test-success' : 'test-error');
+                testResult.textContent = data.status === 'success' ? '✅ Connection Successful! AI is ready.' : '❌ ' + data.message;
+            }
+        }
+    } catch(e) { 
+        updateHeaderStatus('offline'); 
+        if (isFromModal) {
+            const testResult = document.getElementById('testResult');
+            if (testResult) {
+                testResult.className = 'test-result test-error';
+                testResult.textContent = e.name === 'AbortError' 
+                    ? '❌ Request Timed Out. If using a Local Model, it might be heavily loading into memory. Try again in a minute.' 
+                    : '❌ Connection Failed: Could not reach the backend server.';
+            }
+        }
+    }
 }
+
 async function autoConnect() {
     const stored = safeParse('gp_config', null);
-    if (stored && Date.now() < stored.expiry) testConnection();
+    if (stored && Date.now() < stored.expiry) testConnection(false); 
 }
 
 function toggleProviderFields() {
@@ -494,7 +506,7 @@ function toggleProviderFields() {
     const apiKeyHelp = document.getElementById('apiKeyHelp');
     const modelNameHelp = document.getElementById('modelNameHelp');
 
-    if (!baseUrlLabel) return; // Failsafe
+    if (!baseUrlLabel) return; 
 
     if (provider === 'ollama') {
         baseUrlLabel.textContent = 'Ollama Server URL';
@@ -535,6 +547,7 @@ function handleConfigUpload(event) {
                 }
             }
         });
+        
         if (config.provider) document.getElementById('provider').value = config.provider.toLowerCase();
         if (config.baseUrl) document.getElementById('baseUrl').value = config.baseUrl;
         if (config.apiKey) document.getElementById('apiKey').value = config.apiKey;
@@ -544,8 +557,11 @@ function handleConfigUpload(event) {
 
         toggleProviderFields();
         const testResult = document.getElementById('testResult');
-        testResult.style.display = 'block'; testResult.className = 'test-result test-success';
-        testResult.textContent = '✅ File loaded! Review the fields and click "Save Configuration".';
+        if (testResult) {
+            testResult.style.display = 'block'; 
+            testResult.className = 'test-result test-success';
+            testResult.textContent = '✅ File loaded! Review the fields and click "Save Configuration".';
+        }
         event.target.value = '';
     };
     reader.readAsText(file);
