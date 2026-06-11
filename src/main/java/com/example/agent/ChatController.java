@@ -73,6 +73,9 @@ public class ChatController {
         String baseUrl = config.getProperty("baseUrl", "");
         String mcpUrl = config.getProperty("mcpUrl", "");
         String mcpAuth = config.getProperty("mcpAuth", "");
+        
+        // Grab the custom system instructions provided by the user
+        String customSystemPrompt = config.getProperty("systemPrompt", "");
 
         if (modelName == null || modelName.trim().isEmpty()) {
             return Map.of("response", "⚠️ **Configuration Required:** Please click the Settings button and configure an AI Provider and Model Name before chatting.");
@@ -87,7 +90,15 @@ public class ChatController {
                 .tools(mcpTools)
                 .build();
         
-        String enforcedPrompt = prompt + "\n\n[SYSTEM REMINDER: 1. You MUST actively use the `executeQuery` tool to fetch the actual data. Do not just write SQL without running it. 2. In your final response, display the exact SQL query used inside a ```sql markdown block, followed by the formatted data results.]";
+        // Construct the enforced rule set
+        String enforcedPrompt = prompt + "\n\n[SYSTEM REMINDER: 1. You MUST actively use the `executeQuery` tool to fetch the actual data. Do not just write SQL without running it. 2. In your final response, display the exact SQL query used inside a ```sql markdown block, followed by the formatted data results.";
+        
+        // Inject the user's custom instructions into the system barrier if they exist
+        if (!customSystemPrompt.trim().isEmpty()) {
+            enforcedPrompt += "\n\nUSER CUSTOM INSTRUCTIONS:\n" + customSystemPrompt;
+        }
+        
+        enforcedPrompt += "]";
         
         String response = agent.chat(userId, enforcedPrompt);
         return Map.of("response", response);
@@ -112,7 +123,6 @@ public class ChatController {
         }
 
         try {
-            // Allow 90 seconds max for testing
             ChatLanguageModel model = buildModel(provider, modelName, apiKey, baseUrl, 90);
             String response = model.generate("Respond with the exact word: OK");
             return Map.of("status", "success", "message", "Connection Successful! AI responded: " + response);
@@ -128,14 +138,14 @@ public class ChatController {
             case "openai":
                 var openAiBuilder = OpenAiChatModel.builder()
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1); // THE FIX: Prevent silent retry loops
+                        .timeout(timeout).maxRetries(1);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) openAiBuilder.baseUrl(baseUrl);
                 return openAiBuilder.build();
                 
             case "anthropic":
                 var anthropicBuilder = AnthropicChatModel.builder()
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1); // THE FIX: Prevent silent retry loops
+                        .timeout(timeout).maxRetries(1);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) anthropicBuilder.baseUrl(baseUrl);
                 return anthropicBuilder.build();
                 
@@ -144,7 +154,7 @@ public class ChatController {
                 String ollamaUrl = (baseUrl != null && !baseUrl.trim().isEmpty()) ? baseUrl : "http://localhost:11434";
                 return OllamaChatModel.builder()
                         .baseUrl(ollamaUrl).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1) // THE FIX: Prevent silent retry loops
+                        .timeout(timeout).maxRetries(1)
                         .build();
         }
     }

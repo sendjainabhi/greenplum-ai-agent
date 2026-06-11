@@ -108,6 +108,12 @@
             <input type="text" id="modelName" placeholder="e.g. qwen2.5:32b">
             <div id="modelNameHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Select a provider to see format</div>
         </div>
+
+        <div class="form-group">
+            <label>Custom System Prompt (Pre-training)</label>
+            <textarea id="systemPrompt" rows="3" placeholder="e.g., You are a strict PostgreSQL DBA. Explain queries clearly." style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; font-size: 0.9em; resize: vertical;"></textarea>
+            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">These instructions will be applied dynamically to all conversations.</div>
+        </div>
         
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
         
@@ -130,6 +136,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=5"></script>
+<script src="/js/app.js?v=6"></script>
 </body>
 </html>

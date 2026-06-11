@@ -1,0 +1,11 @@
+---
+applications:
+- name: greenplum-ai-agent
+  path: greenplum-ai-agent-1.0.0.jar  # Update this to match your exact .jar file location
+  memory: 2G
+  instances: 1
+  buildpacks:
+    - java_buildpack_offline
+  env:
+    JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
+

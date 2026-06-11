@@ -92,9 +92,52 @@ function renderSidebar() {
     chatSessions.forEach(session => {
         const div = document.createElement('div');
         div.className = `chat-item ${session.id === currentSessionId ? 'active' : ''}`;
-        div.textContent = session.title;
-        if (activeRequests[session.id]) div.innerHTML = `⏳ ` + session.title;
+        
+        // NEW: Inline styles to align the tab name and the edit icon beautifully
+        div.style.display = 'flex';
+        div.style.justifyContent = 'space-between';
+        div.style.alignItems = 'center';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.style.overflow = 'hidden';
+        titleSpan.style.textOverflow = 'ellipsis';
+        titleSpan.style.whiteSpace = 'nowrap';
+        titleSpan.style.flexGrow = '1';
+        
+        if (activeRequests[session.id]) {
+            titleSpan.textContent = `⏳ ` + session.title;
+        } else {
+            titleSpan.textContent = session.title;
+        }
+
+        // NEW: The Rename Edit Button
+        const editBtn = document.createElement('button');
+        editBtn.innerHTML = '✏️';
+        editBtn.style.background = 'transparent';
+        editBtn.style.border = 'none';
+        editBtn.style.cursor = 'pointer';
+        editBtn.style.opacity = '0.5';
+        editBtn.style.padding = '0 5px';
+        editBtn.title = "Rename Tab";
+        
+        // Add a clean hover effect
+        editBtn.onmouseover = () => editBtn.style.opacity = '1';
+        editBtn.onmouseout = () => editBtn.style.opacity = '0.5';
+
+        editBtn.onclick = (e) => {
+            e.stopPropagation(); // Prevents loading the tab when you just want to edit the name
+            const newTitle = prompt("Rename your conversation tab:", session.title);
+            if (newTitle && newTitle.trim() !== '') {
+                session.title = newTitle.trim();
+                localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
+                renderSidebar();
+            }
+        };
+
         div.onclick = () => loadSession(session.id);
+        
+        div.appendChild(titleSpan);
+        div.appendChild(editBtn);
         chatList.appendChild(div);
     });
 }
@@ -102,7 +145,7 @@ function renderSidebar() {
 function updateSessionTitle(firstPrompt, targetSessionId) {
     const session = chatSessions.find(s => s.id === targetSessionId);
     if (session && session.title === 'New Conversation') {
-        session.title = firstPrompt.length > 30 ? firstPrompt.substring(0, 30) + '...' : firstPrompt;
+        session.title = firstPrompt.length > 25 ? firstPrompt.substring(0, 25) + '...' : firstPrompt;
         localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
         renderSidebar();
     }
@@ -389,7 +432,8 @@ async function openSettings() {
     try {
         const stored = safeParse('gp_config', { data: {} });
 
-        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+        // System Prompt is now included in the loop!
+        ['provider','baseUrl','apiKey','modelName','systemPrompt','mcpUrl','mcpAuth'].forEach(id => {
             if(document.getElementById(id) && stored.data[id]) document.getElementById(id).value = stored.data[id];
         });
         toggleProviderFields();
@@ -407,7 +451,8 @@ async function saveSettings() {
 
     try {
         const payload = {};
-        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+        // Save the system prompt too!
+        ['provider','baseUrl','apiKey','modelName','systemPrompt','mcpUrl','mcpAuth'].forEach(id => {
             const element = document.getElementById(id);
             if (element) payload[id] = element.value.trim();
         });
@@ -439,7 +484,7 @@ async function testConnection(isFromModal = false) {
     
     let payload = {};
     if (isFromModal) {
-        ['provider','baseUrl','apiKey','modelName','mcpUrl','mcpAuth'].forEach(id => {
+        ['provider','baseUrl','apiKey','modelName','systemPrompt','mcpUrl','mcpAuth'].forEach(id => {
             if(document.getElementById(id)) payload[id] = document.getElementById(id).value.trim();
         });
         
@@ -460,7 +505,7 @@ async function testConnection(isFromModal = false) {
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 seconds hard stop
+        const timeoutId = setTimeout(() => controller.abort(), 90000);
 
         const res = await fetch('/api/test', { 
             method: 'POST', 
@@ -552,6 +597,8 @@ function handleConfigUpload(event) {
         if (config.baseUrl) document.getElementById('baseUrl').value = config.baseUrl;
         if (config.apiKey) document.getElementById('apiKey').value = config.apiKey;
         if (config.modelName) document.getElementById('modelName').value = config.modelName;
+        // Parse the system prompt if they uploaded it
+        if (config.systemPrompt) document.getElementById('systemPrompt').value = config.systemPrompt;
         if (config.mcpUrl) document.getElementById('mcpUrl').value = config.mcpUrl;
         if (config.mcpAuth) document.getElementById('mcpAuth').value = config.mcpAuth;
 
