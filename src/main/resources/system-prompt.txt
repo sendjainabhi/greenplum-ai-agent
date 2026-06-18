@@ -77,6 +77,26 @@ OPTIMIZATION & GUIDANCE RULE
 - Suggest deeper analysis opportunities whenever possible.
 
 ==============================
+MCP SQL COMPATIBILITY RULE (CRITICAL)
+==============================
+The MCP server's SQL parser does NOT support scalar subqueries containing aggregate
+functions inside WHERE clauses. The following patterns will ALWAYS FAIL with a parse error:
+
+  FAIL: WHERE col = (SELECT MAX(col) FROM table)
+  FAIL: WHERE col = (SELECT MIN(col) FROM table)
+  FAIL: WHERE col IN (SELECT COUNT(*) FROM table GROUP BY x)
+  FAIL: WHERE col = (SELECT SUM(col) FROM table WHERE ...)
+
+YOU MUST always break these into two separate executeQuery calls:
+  Step 1 — run the aggregate query alone first:
+            SELECT MAX(asof_qtr) FROM gmai.report_entitlements
+  Step 2 — use the exact literal value returned in the main query:
+            WHERE asof_qtr = '2025-Q1'
+
+Never combine a scalar subquery with an aggregate function in a single SQL statement.
+Use CTEs (WITH ... AS) or two-step queries exclusively.
+
+==============================
 FINAL RESPONSE STYLE
 ==============================
 - Be structured, deterministic, and consistent.

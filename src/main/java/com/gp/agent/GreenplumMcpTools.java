@@ -1,5 +1,6 @@
 package com.gp.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
@@ -20,8 +21,14 @@ public class GreenplumMcpTools {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final RestTemplate REST_TEMPLATE = buildRestTemplate();
 
+    // Server mode — detected once on first use, then cached
+    private enum ServerMode { UNKNOWN, STATELESS, SESSION_BASED }
+
     private final String mcpServerUrl;
     private final String mcpAuthHeader;
+
+    private volatile ServerMode detectedMode = ServerMode.UNKNOWN;
+    private volatile String     sessionId    = null;
 
     public GreenplumMcpTools(String mcpServerUrl, String mcpAuthHeader) {
         this.mcpServerUrl  = mcpServerUrl;
@@ -35,17 +42,111 @@ public class GreenplumMcpTools {
         return new RestTemplate(factory);
     }
 
-    private HttpHeaders buildHeaders() {
+    // -------------------------------------------------------------------------
+    // Session management (Approach A — adaptive detection)
+    // -------------------------------------------------------------------------
+
+    // Synchronized so only one thread runs the handshake even under concurrent calls.
+    private synchronized void initializeSession() {
+        if (detectedMode != ServerMode.UNKNOWN) return; // another thread already resolved it
+
+        if (mcpServerUrl == null || mcpServerUrl.trim().isEmpty()) {
+            detectedMode = ServerMode.STATELESS;
+            return;
+        }
+
+        try {
+            Map<String, Object> payload = Map.of(
+                "jsonrpc", "2.0",
+                "id",      "init-" + UUID.randomUUID(),
+                "method",  "initialize",
+                "params",  Map.of(
+                    "protocolVersion", "2025-03-26",
+                    "capabilities",    Map.of(),
+                    "clientInfo",      Map.of("name", "greenplum-ai-agent", "version", "1.0.0")
+                )
+            );
+
+            ResponseEntity<String> response = REST_TEMPLATE.postForEntity(
+                mcpServerUrl,
+                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(payload), buildHeaders(null)),
+                String.class
+            );
+
+            String sid = response.getHeaders().getFirst("Mcp-Session-Id");
+            if (sid != null && !sid.trim().isEmpty()) {
+                sessionId    = sid.trim();
+                detectedMode = ServerMode.SESSION_BASED;
+                log.info("[MCP] New-spec server (2025-03-26) — session established: {}", sessionId);
+                sendInitializedNotification();
+            } else {
+                // Server accepted initialize but issued no session ID — old server or lenient new server
+                detectedMode = ServerMode.STATELESS;
+                log.info("[MCP] Server accepted initialize but returned no session ID — stateless mode");
+            }
+
+        } catch (Exception e) {
+            // Server does not understand initialize (old-spec stateless server) — fall through silently
+            detectedMode = ServerMode.STATELESS;
+            log.info("[MCP] Old-spec server detected (initialize unsupported: {}) — stateless mode", e.getMessage());
+        }
+    }
+
+    // Spec requires this notification after initialize; response is not expected.
+    private void sendInitializedNotification() {
+        try {
+            Map<String, Object> notification = Map.of(
+                "jsonrpc", "2.0",
+                "method",  "notifications/initialized"
+            );
+            REST_TEMPLATE.postForEntity(
+                mcpServerUrl,
+                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(notification), buildHeaders(sessionId)),
+                String.class
+            );
+            log.debug("[MCP] notifications/initialized sent");
+        } catch (Exception e) {
+            log.debug("[MCP] notifications/initialized failed (non-fatal): {}", e.getMessage());
+        }
+    }
+
+    private synchronized void resetSession() {
+        log.info("[MCP] Resetting session state for re-initialization");
+        sessionId    = null;
+        detectedMode = ServerMode.UNKNOWN;
+    }
+
+    private static boolean isInvalidSessionError(String body) {
+        if (body == null) return false;
+        try {
+            JsonNode error = OBJECT_MAPPER.readTree(body).path("error");
+            if (!error.isMissingNode()) {
+                String msg = error.path("message").asText("").toLowerCase();
+                return msg.contains("invalid session") || msg.contains("session not found")
+                        || msg.contains("session expired") || msg.contains("unknown session");
+            }
+        } catch (Exception ignored) {}
+        return body.toLowerCase().contains("invalid session");
+    }
+
+    // -------------------------------------------------------------------------
+    // Header builder — includes Mcp-Session-Id when available
+    // -------------------------------------------------------------------------
+
+    private HttpHeaders buildHeaders(String sid) {
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
         if (mcpAuthHeader != null && !mcpAuthHeader.trim().isEmpty()) {
             h.set("Authorization", mcpAuthHeader);
         }
+        if (sid != null && !sid.isEmpty()) {
+            h.set("Mcp-Session-Id", sid);
+        }
         return h;
     }
 
     // -------------------------------------------------------------------------
-    // Connectivity test (static — uses its own short-timeout RestTemplate)
+    // Connectivity test (static — tries initialize first, falls back to tools/list)
     // -------------------------------------------------------------------------
 
     public static Map<String, String> testConnection(String mcpUrl, String mcpAuth) {
@@ -64,19 +165,47 @@ public class GreenplumMcpTools {
                 headers.set("Authorization", mcpAuth);
             }
 
-            Map<String, Object> payload = Map.of(
+            // Step 1 — try initialize (new-spec server)
+            String probeSessionId = null;
+            try {
+                Map<String, Object> initPayload = Map.of(
+                    "jsonrpc", "2.0",
+                    "id",      "test-init",
+                    "method",  "initialize",
+                    "params",  Map.of(
+                        "protocolVersion", "2025-03-26",
+                        "capabilities",    Map.of(),
+                        "clientInfo",      Map.of("name", "greenplum-ai-agent", "version", "1.0.0")
+                    )
+                );
+                ResponseEntity<String> initResp = rt.postForEntity(mcpUrl,
+                    new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(initPayload), headers),
+                    String.class);
+                probeSessionId = initResp.getHeaders().getFirst("Mcp-Session-Id");
+            } catch (Exception ignored) {
+                // Old server — initialize not supported, will try tools/list directly
+            }
+
+            // Step 2 — call tools/list (with session ID if we got one)
+            HttpHeaders listHeaders = new HttpHeaders();
+            listHeaders.setContentType(MediaType.APPLICATION_JSON);
+            if (mcpAuth != null && !mcpAuth.trim().isEmpty()) listHeaders.set("Authorization", mcpAuth);
+            if (probeSessionId != null) listHeaders.set("Mcp-Session-Id", probeSessionId);
+
+            Map<String, Object> listPayload = Map.of(
                 "jsonrpc", "2.0",
                 "id",      1,
                 "method",  "tools/list",
                 "params",  Map.of()
             );
-
-            ResponseEntity<String> resp = rt.postForEntity(mcpUrl,
-                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(payload), headers),
+            ResponseEntity<String> listResp = rt.postForEntity(mcpUrl,
+                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(listPayload), listHeaders),
                 String.class);
 
+            String mode = (probeSessionId != null) ? "session-based" : "stateless";
             return Map.of("status", "success",
-                    "message", "MCP server connected (HTTP " + resp.getStatusCode().value() + ")");
+                    "message", "MCP server connected [" + mode + "] (HTTP " + listResp.getStatusCode().value() + ")");
+
         } catch (Exception e) {
             return Map.of("status", "error", "message", e.getMessage());
         }
@@ -102,15 +231,34 @@ public class GreenplumMcpTools {
     }
 
     // -------------------------------------------------------------------------
-    // Internal call
+    // Internal call — detects mode on first use, retries on session expiry
     // -------------------------------------------------------------------------
 
     private String callMcpServer(String toolName, Map<String, Object> arguments) {
+        // Detect server mode on first call
+        if (detectedMode == ServerMode.UNKNOWN) {
+            initializeSession();
+        }
+
+        String result = doCall(toolName, arguments);
+
+        // Session expired mid-use — re-initialize once and retry
+        if (isInvalidSessionError(result) && detectedMode == ServerMode.SESSION_BASED) {
+            log.warn("[MCP] Session invalid/expired — re-initializing and retrying: {}", toolName);
+            resetSession();
+            initializeSession();
+            result = doCall(toolName, arguments);
+        }
+
+        return result;
+    }
+
+    private String doCall(String toolName, Map<String, Object> arguments) {
         try {
             log.info("\n==================== MCP TOOL OUTBOUND ====================\n" +
-                     "Tool Name : {}\nArguments : {}\nTarget URL: {}\n" +
+                     "Tool Name : {}\nArguments : {}\nTarget URL: {}\nMode      : {}\n" +
                      "===========================================================",
-                     toolName, arguments, mcpServerUrl);
+                     toolName, arguments, mcpServerUrl, detectedMode);
 
             Map<String, Object> payload = Map.of(
                 "jsonrpc", "2.0",
@@ -121,7 +269,7 @@ public class GreenplumMcpTools {
 
             ResponseEntity<String> response = REST_TEMPLATE.postForEntity(
                 mcpServerUrl,
-                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(payload), buildHeaders()),
+                new HttpEntity<>(OBJECT_MAPPER.writeValueAsString(payload), buildHeaders(sessionId)),
                 String.class);
 
             String responseBody = response.getBody();
@@ -131,7 +279,7 @@ public class GreenplumMcpTools {
                      "===========================================================",
                      toolName, responseBody);
 
-            return responseBody;
+            return translateMcpError(responseBody);
 
         } catch (Exception e) {
             log.error("\n!!!!!!!!!!!!!!!!!!!! MCP TOOL ERROR !!!!!!!!!!!!!!!!!!!!\n" +
@@ -140,5 +288,38 @@ public class GreenplumMcpTools {
                       toolName, e.getMessage(), e);
             return "Error calling tool " + toolName + ": " + e.getMessage();
         }
+    }
+
+    // Converts raw MCP error responses into actionable instructions the LLM can act on.
+    private static String translateMcpError(String responseBody) {
+        if (responseBody == null) return "";
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(responseBody);
+            boolean isError = root.path("result").path("isError").asBoolean(false);
+            if (!isError) return responseBody; // not an error — pass through unchanged
+
+            String errorText = root.path("result").path("content")
+                                   .path(0).path("text").asText("").toLowerCase();
+
+            if (errorText.contains("failed to parse query") || errorText.contains("syntax error in sql")) {
+                // Check for scalar subquery with aggregate — give the LLM specific corrective instructions
+                if (errorText.contains("max") || errorText.contains("min") || errorText.contains("sum")
+                        || errorText.contains("count") || errorText.contains("avg")) {
+                    log.warn("[MCP] SQL parse error — likely scalar subquery with aggregate. Returning corrective hint.");
+                    return "SQL_PARSE_ERROR: The MCP server rejected this query because its SQL parser does not " +
+                           "support scalar subqueries containing aggregate functions (MAX, MIN, SUM, COUNT, AVG) " +
+                           "inside WHERE clauses. " +
+                           "YOU MUST rewrite this as two separate executeQuery calls: " +
+                           "(1) Run the aggregate query alone to get the literal value, " +
+                           "(2) Use that exact literal value in the main WHERE clause. " +
+                           "Do NOT use (SELECT MAX(...) FROM ...) patterns. Retry immediately with the two-step approach.";
+                }
+                // Generic parse error
+                log.warn("[MCP] SQL parse error: {}", errorText);
+                return "SQL_PARSE_ERROR: The MCP server rejected this query due to a SQL syntax issue: "
+                       + errorText + ". Please rewrite the query and retry.";
+            }
+        } catch (Exception ignored) {}
+        return responseBody; // unrecognised error format — pass through as-is
     }
 }
