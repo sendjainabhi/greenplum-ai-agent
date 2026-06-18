@@ -8,4 +8,11 @@ applications:
     - java_buildpack_offline
   env:
     JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
-
+    SPRING_PROFILES_ACTIVE: cloud
+    # Admin PIN for the Global Pre-Training Prompt feature (🔐 Admin button in the UI).
+    # Set this to a strong secret value before deploying. Do not commit the actual value to git.
+    ADMIN_PIN: tanzuadmin
+    # Uncomment and set the line below only when an NFS volume service is bound.
+    # Without this, user configs and chat memory are stored in the container's ephemeral
+    # home directory and re-seeded from the browser on each container restart.
+    # AGENT_DATA_DIR: /mnt/greenplum-data

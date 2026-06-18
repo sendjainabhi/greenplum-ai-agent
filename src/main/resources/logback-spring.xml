@@ -8,18 +8,23 @@
         </encoder>
     </appender>
 
-    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
-        <file>${LOG_FILE}</file>
-        <append>true</append>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
+    <!-- File appender only active when NOT running on Cloud Foundry -->
+    <springProfile name="!cloud">
+        <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+            <file>${LOG_FILE}</file>
+            <append>true</append>
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+    </springProfile>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
-        <appender-ref ref="FILE" />
+        <springProfile name="!cloud">
+            <appender-ref ref="FILE" />
+        </springProfile>
     </root>
 
-    <logger name="com.example.agent" level="DEBUG" />
+    <logger name="com.gp.agent" level="DEBUG" />
 </configuration>

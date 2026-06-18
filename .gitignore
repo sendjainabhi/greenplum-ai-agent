@@ -12,3 +12,8 @@ target/
 # Log files
 *.log
 .DS_Store
+
+# Sensitive credential and config files — never commit these
+agent-config.properties
+agent-credential.txt
+stdout.log

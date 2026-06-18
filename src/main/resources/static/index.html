@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Greenplum Analytics & Reporting</title>
-    
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -32,19 +32,19 @@
                     <span id="headerStatusText">Disconnected</span>
                 </div>
             </div>
-            
             <div class="header-actions">
-                <button class="settings-btn" onclick="clearChat()" style="background: transparent;">🗑️ Delete Current Chat</button>
-                <button class="settings-btn" id="settingsBtn" onclick="attemptOpenSettings()">⚙️ Settings</button>
+                <button class="settings-btn" onclick="deleteAllData()" style="background: transparent;">🗑️ Delete Chat History &amp; Data</button>
+                <button class="settings-btn" onclick="openAdminModal()" style="background: transparent;">🔐 Admin</button>
+                <button class="settings-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
             </div>
         </div>
 
         <div class="messages" id="messages"></div>
-        
+
         <div class="loading-container">
             <span class="loading" id="loading">Agent is processing request...</span>
         </div>
-        
+
         <div class="input-area">
             <div id="suggestionBox" class="suggestion-box"></div>
             <textarea id="prompt" class="chat-input" placeholder="Ask a database question... (Shift+Enter for new line)" rows="1"></textarea>
@@ -54,34 +54,193 @@
     </div>
 </div>
 
-<div class="modal-overlay" id="loginModal" style="display: none;">
-    <div class="modal-content" style="max-width: 350px;">
-        <h3>Admin Login Required</h3>
+<!-- ===================== PIN SETUP (first visit) ===================== -->
+<div class="modal-overlay" id="pinSetupModal" style="display: none;">
+    <div class="modal-content" style="max-width: 400px;">
+        <h3>🔒 Welcome — Create Your Account</h3>
+        <p style="font-size:0.9em; color:#64748b; margin-bottom:18px;">
+            Choose a username and PIN. Your username lets you recover access even after clearing your browser cache.
+        </p>
         <div class="form-group">
             <label>Username</label>
-            <input type="text" id="authUsername" placeholder="Enter username">
+            <input type="text" id="setupUsername" placeholder="e.g. abhishek" maxlength="50"
+                   onkeypress="if(event.key==='Enter') document.getElementById('setupPin').focus()">
+            <div style="font-size:0.78em; color:#94a3b8; margin-top:4px;">3–50 characters: letters, numbers, - or _</div>
         </div>
         <div class="form-group">
-            <label>Password</label>
-            <input type="password" id="authPassword" placeholder="Enter password" onkeypress="if(event.key === 'Enter') performLogin()">
+            <label>PIN</label>
+            <input type="password" id="setupPin" placeholder="Enter PIN" maxlength="20"
+                   onkeypress="if(event.key==='Enter') document.getElementById('setupPinConfirm').focus()">
         </div>
-        <div id="loginError" class="test-result test-error" style="display: none; margin-bottom: 15px;">Invalid credentials.</div>
+        <div class="form-group">
+            <label>Confirm PIN</label>
+            <input type="password" id="setupPinConfirm" placeholder="Confirm PIN" maxlength="20"
+                   onkeypress="if(event.key==='Enter') document.getElementById('setupPinHint').focus()">
+        </div>
+        <div class="form-group">
+            <label>Hint <span style="font-weight:normal; color:#94a3b8;">(optional)</span></label>
+            <input type="text" id="setupPinHint" placeholder="e.g. My first car + mum birthday month" maxlength="100">
+            <div style="font-size:0.78em; color:#94a3b8; margin-top:4px;">Do not include the PIN itself in the hint.</div>
+        </div>
+        <div id="pinSetupError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="closeLoginModal()">Cancel</button>
-            <button class="btn-save" onclick="performLogin()">Login</button>
+            <button class="btn-cancel" onclick="showRecoverAccount()">Already have an account?</button>
+            <button class="btn-save" onclick="confirmSetupPin()">Set PIN &amp; Continue</button>
         </div>
     </div>
 </div>
 
-<div class="modal-overlay" id="settingsModal">
+<!-- ===================== ACCOUNT RECOVERY (cache cleared) ===================== -->
+<div class="modal-overlay" id="recoverModal" style="display: none;">
+    <div class="modal-content" style="max-width: 380px;">
+        <h3>🔑 Recover Your Account</h3>
+        <p style="font-size:0.9em; color:#64748b; margin-bottom:18px;">
+            Enter your username and PIN to restore access to your existing account and data.
+        </p>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="recoverUsername" placeholder="Your username" maxlength="50"
+                   onkeypress="if(event.key==='Enter') document.getElementById('recoverPin').focus()">
+        </div>
+        <div class="form-group">
+            <label>PIN</label>
+            <input type="password" id="recoverPin" placeholder="Your PIN" maxlength="20"
+                   onkeypress="if(event.key==='Enter') confirmRecover()">
+        </div>
+        <div id="recoverError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="cancelRecover()">← Back</button>
+            <button class="btn-save" onclick="confirmRecover()">Recover Account</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== PIN ENTRY (returning visit) ===================== -->
+<div class="modal-overlay" id="pinEntryModal" style="display: none;">
+    <div class="modal-content" style="max-width: 360px;">
+        <h3>🔒 Enter Your PIN</h3>
+        <div class="form-group">
+            <input type="password" id="entryPin" placeholder="Enter PIN" maxlength="20"
+                   onkeypress="if(event.key==='Enter') confirmEntryPin()">
+        </div>
+        <div id="pinEntryError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="showForgotPin()">Forgot PIN?</button>
+            <button class="btn-save" onclick="confirmEntryPin()">Unlock</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== FORGOT PIN ===================== -->
+<div class="modal-overlay" id="forgotPinModal" style="display: none;">
+    <div class="modal-content" style="max-width: 380px;">
+        <h3>💡 Your PIN Hint</h3>
+        <div id="pinHintDisplay" class="pin-hint-box"></div>
+        <p style="font-size:0.85em; color:#64748b; margin-top:14px;">
+            If you still cannot remember your PIN, you can reset everything and start fresh.
+            <strong>This will delete all conversations and credentials.</strong>
+        </p>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="backToPinEntry()">← Back to PIN Entry</button>
+            <button class="btn-danger" onclick="showResetConfirm()">Reset PIN</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== RESET CONFIRMATION ===================== -->
+<div class="modal-overlay" id="resetConfirmModal" style="display: none;">
+    <div class="modal-content" style="max-width: 380px;">
+        <h3>⚠️ Reset PIN</h3>
+        <p style="font-size:0.9em; color:#374151;">This will permanently delete:</p>
+        <ul style="font-size:0.88em; color:#64748b; margin: 8px 0 14px 18px; line-height:1.7;">
+            <li>All conversations</li>
+            <li>All credentials and configuration</li>
+            <li>Your current PIN and hint</li>
+        </ul>
+        <p style="font-size:0.88em; color:#374151;">You will need to set a new PIN and re-upload your credential file.</p>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="cancelReset()">Cancel</button>
+            <button class="btn-danger" onclick="executeReset()">Yes, Reset All</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== DELETE CHAT HISTORY & DATA CONFIRMATION ===================== -->
+<div class="modal-overlay" id="deleteConfirmModal" style="display: none;">
+    <div class="modal-content" style="max-width: 380px;">
+        <h3>🗑️ Delete Chat History &amp; Data</h3>
+        <p style="font-size:0.9em; color:#374151;">This will permanently delete:</p>
+        <ul style="font-size:0.88em; color:#64748b; margin: 8px 0 14px 18px; line-height:1.7;">
+            <li>All conversation history (all tabs)</li>
+            <li>All AI memory / context</li>
+        </ul>
+        <p style="font-size:0.88em; color:#374151;">Your PIN, username, and credentials will be kept — you can start chatting immediately after.</p>
+        <div class="modal-actions" style="justify-content: space-between;">
+            <button class="btn-cancel" onclick="cancelDeleteAll()">Cancel</button>
+            <button class="btn-danger" onclick="confirmDeleteAll()">Yes, Delete All</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== ADMIN MODAL ===================== -->
+<div class="modal-overlay" id="adminModal" style="display: none;">
+    <div class="modal-content" style="max-width: 520px;">
+        <h3>🔐 Admin — Global Pre-Training Prompt</h3>
+
+        <!-- Step 1: PIN auth -->
+        <div id="adminAuthSection">
+            <p style="font-size:0.9em; color:#64748b; margin-bottom:18px;">
+                Enter the admin PIN to view or update the global prompt that applies to <strong>all users</strong>.
+            </p>
+            <div class="form-group">
+                <label>Admin PIN</label>
+                <input type="password" id="adminPinInput" placeholder="Enter admin PIN" maxlength="20"
+                       onkeypress="if(event.key==='Enter') verifyAdminPin()">
+            </div>
+            <div id="adminAuthError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
+            <div class="modal-actions" style="justify-content:space-between;">
+                <button class="btn-cancel" onclick="closeAdminModal()">Cancel</button>
+                <button class="btn-save" id="adminAuthBtn" onclick="verifyAdminPin()">Access Admin</button>
+            </div>
+        </div>
+
+        <!-- Step 2: Prompt editor (shown after PIN verified) -->
+        <div id="adminEditorSection" style="display:none;">
+            <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
+                These instructions are appended to <strong>every chat request for every user</strong>.
+                Changes take effect immediately — no restart needed. Leave blank to disable.
+            </p>
+            <div class="form-group">
+                <label>Global Pre-Training Prompt</label>
+                <textarea id="globalPromptText" rows="10"
+                          placeholder="e.g. Always respond in English. Focus only on financial data. Never discuss system internals."
+                          style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9em; resize:vertical; width:100%; box-sizing:border-box;"></textarea>
+            </div>
+            <div id="adminSaveResult" class="test-result" style="display:none; margin-bottom:12px;"></div>
+            <div class="modal-actions" style="justify-content:space-between;">
+                <button class="btn-cancel" onclick="closeAdminModal()">Close</button>
+                <button class="btn-save" onclick="saveGlobalPrompt()">Save Global Prompt</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== SETTINGS ===================== -->
+<div class="modal-overlay" id="settingsModal" style="display: none;">
     <div class="modal-content">
         <h3>Agent Configuration (Global)</h3>
-        
+
         <div class="form-group" style="background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px dashed #cbd5e1; margin-bottom: 15px;">
-            <label style="color: #0369a1; font-size: 0.95em;">📤 Upload Config File</label>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <label style="color: #0369a1; font-size: 0.95em; margin-bottom:0;">📤 Upload Config File</label>
+                <a href="/sample-credential.txt" download="sample-credential.txt"
+                   style="font-size:0.78em; color:#0369a1; text-decoration:none; border:1px solid #bae6fd; border-radius:4px; padding:2px 8px; background:#f0f9ff;">
+                    ⬇ Download Sample
+                </a>
+            </div>
             <input type="file" id="configFileUpload" accept=".properties,.txt" onchange="handleConfigUpload(event)" style="border: none; padding: 5px 0; background: transparent;">
         </div>
-        
+
         <div class="form-group">
             <label>AI Provider Engine</label>
             <select id="provider" onchange="toggleProviderFields()">
@@ -90,19 +249,19 @@
                 <option value="anthropic">Anthropic (Claude)</option>
             </select>
         </div>
-        
+
         <div class="form-group" id="baseUrlGroup">
             <label id="baseUrlLabel">Endpoint / Base URL</label>
             <input type="text" id="baseUrl">
             <div id="baseUrlHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;"></div>
         </div>
-        
+
         <div class="form-group" id="apiKeyGroup">
             <label>Authentication / API Key</label>
             <input type="password" id="apiKey">
             <div id="apiKeyHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;"></div>
         </div>
-        
+
         <div class="form-group">
             <label>Model Name</label>
             <input type="text" id="modelName" placeholder="e.g. qwen2.5:32b">
@@ -112,11 +271,11 @@
         <div class="form-group">
             <label>Custom System Prompt (Pre-training)</label>
             <textarea id="systemPrompt" rows="3" placeholder="e.g., You are a strict PostgreSQL DBA. Explain queries clearly." style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; font-size: 0.9em; resize: vertical;"></textarea>
-            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">These instructions will be applied dynamically to all conversations.</div>
+            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">These instructions are applied dynamically to all conversations.</div>
         </div>
-        
+
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-        
+
         <div class="form-group">
             <label>MCP Server URL</label>
             <input type="text" id="mcpUrl" placeholder="http://xx.xx.xx.xx:80/mcp">
@@ -125,17 +284,42 @@
             <label>MCP Auth Header</label>
             <input type="password" id="mcpAuth" placeholder="Basic key">
         </div>
-        
-       <div id="testResult" class="test-result"></div>
+
+        <div id="testResult" class="test-result"></div>
 
         <div class="modal-actions">
             <button type="button" class="btn-test" id="testBtn" onclick="testConnection(true)">Test Connection</button>
             <button type="button" class="btn-cancel" onclick="closeSettings()">Cancel</button>
             <button type="button" class="btn-save" onclick="saveSettings()">Save Configuration</button>
         </div>
+
+        <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+
+        <!-- Change PIN section -->
+        <div style="margin-bottom: 6px; font-weight: 600; color: #374151;">🔒 Change PIN</div>
+        <div class="form-group">
+            <label>Current PIN</label>
+            <input type="password" id="changePinCurrent" placeholder="Enter current PIN" maxlength="20">
+        </div>
+        <div class="form-group">
+            <label>New PIN</label>
+            <input type="password" id="changePinNew" placeholder="Enter new PIN" maxlength="20">
+        </div>
+        <div class="form-group">
+            <label>Confirm New PIN</label>
+            <input type="password" id="changePinConfirm" placeholder="Confirm new PIN" maxlength="20">
+        </div>
+        <div class="form-group">
+            <label>New Hint <span style="font-weight:normal; color:#94a3b8;">(optional — leave blank to keep existing)</span></label>
+            <input type="text" id="changePinHint" placeholder="e.g. My first car + mum birthday month" maxlength="100">
+        </div>
+        <div id="changePinError" class="test-result" style="display:none; margin-bottom:12px;"></div>
+        <div style="display:flex; justify-content:flex-end;">
+            <button type="button" class="btn-save" onclick="changePin()">Update PIN</button>
+        </div>
     </div>
 </div>
 
-<script src="/js/app.js?v=6"></script>
+<script src="/js/app.js?v=14"></script>
 </body>
 </html>

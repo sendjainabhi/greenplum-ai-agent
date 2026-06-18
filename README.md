@@ -9,11 +9,9 @@ An intelligent, secure, and tool-driven AI agent designed to interact with Green
 
 ## 👋 Welcome to Your Greenplum Database AI Assistant!
 
-I am a specialized, read-only Greenplum Database AI assistant designed to help you analyze, diagnose, and optimize your Greenplum cluster. I operate strictly via Greenplum’s Model Context Protocol (MCP) tools to execute precise operations and provide actionable data insights.
+A specialized, read-only Greenplum Database AI assistant designed to help you analyze, diagnose, and optimize your Greenplum cluster. It operates strictly via Greenplum's Model Context Protocol (MCP) tools to execute precise operations and provide actionable data insights.
 
 ### 📸 User Interface & Demo Gallery
-
-Behold the conversational interface in action across various diagnostic scenarios:
 
 | 🟦 Interface Dashboard | 🟦 Tool Execution Output |
 | :---: | :---: |
@@ -24,160 +22,302 @@ Behold the conversational interface in action across various diagnostic scenario
 
 ---
 
-## ✨ Latest Features & Upgrades
+## ✨ Features
 
-The application has been overhauled to provide a production-grade, ChatGPT-like user experience with significant performance optimizations:
+### 🔒 PIN Authentication & Account Recovery
+- Every user creates a **username + PIN** on first visit — no email, no password manager needed.
+- The PIN hash is stored both in the browser and on the server, so even after a browser cache clear, users can recover their account by entering their username and PIN.
+- PIN hints are supported for recovery assistance.
+- Users can change their PIN at any time from **⚙️ Settings**.
 
-* **Multi-Session Chat Sidebar:** Run up to 4 independent conversational threads. Fire off a heavy 3-minute database query in one tab, open a new chat, and continue working without locking the UI.
-* **Persistent Context Memory:** Backed by dedicated file-per-user JSON storage (`session-123-memory.json`), the AI flawlessly remembers your conversational context across sessions and server restarts.
-* **Ultra-Fast Autocomplete:** A highly optimized, 50ms-debounced intelligent search box predicts your queries in real-time based on past session history using efficient DOM `DocumentFragment` rendering.
-* **Smart Auto-Connect:** Credentials and routing details are cached locally with a 30-day expiration timer, silently testing and re-establishing server connectivity the second you load the page.
-* **One-Click PDF Export:** Instantly download any SQL query, data table, and generated Chart.js graph into a beautifully formatted PDF report.
-* **Self-Healing State & RAM Caching:** The frontend automatically detects and wipes corrupted browser memory to prevent UI crashes, while the backend utilizes volatile RAM caching to eliminate synchronous Disk I/O bottlenecks.
+### 💬 Multi-Session Chat
+- Run up to **4 independent conversation tabs** simultaneously.
+- Each session has its own AI memory, title, and history.
+- Rename any tab with ✏️ or delete an individual conversation with 🗑️.
+- Sessions persist across browser refreshes and server restarts.
+
+### 🧠 Persistent AI Memory
+- AI context is saved per-user, per-session as JSON files on the server.
+- Memory window of **30 messages** per session, retained for **90 days**.
+- Clearing chat history does **not** delete your credentials or configuration.
+
+### 📊 Rich Response Formatting
+- Markdown tables, syntax-highlighted SQL blocks, and inline charts (Chart.js).
+- One-click **PDF export** for any AI response.
+- Copy button on every code block.
+
+### 🔌 Multi-Provider LLM Support
+| Provider | Notes |
+| :--- | :--- |
+| **Ollama** | Local models — `qwen3:30b`, `llama3`, etc. |
+| **OpenAI Compatible** | ChatGPT, vLLM, LMStudio, any OpenAI-spec endpoint |
+| **Anthropic** | Claude models via Anthropic API |
+
+### ⚡ Autocomplete & Smart UX
+- 50ms-debounced autocomplete based on your past session history.
+- Auto-connects on page load using saved credentials.
+- Cancel in-flight requests at any time.
+
+### 🔐 Admin — Global Pre-Training Prompt
+Administrators can set a **global pre-training prompt** that is silently appended to every chat request for every user — without any code change, config file edit, or server restart.
+
+- Accessed via the **🔐 Admin** button in the header using a server-configured PIN.
+- The global prompt is stored on disk and takes effect immediately on the next request after saving.
+- It **adds to** each user's personal system prompt — it does not override it.
+- Useful for org-wide policies: language restrictions, scope restrictions, tone requirements, data classification rules, etc.
+- Leave the global prompt blank to disable it.
 
 ---
 
 ## 🔧 Core Capabilities
 
-| Capability | Tool Used | System Purpose |
+| Capability | Tool Used | Purpose |
 | :--- | :--- | :--- |
-| **Bloat Analysis** | `checkTableBloat` | Identifies oversized tables requiring `VACUUM` operations. |
-| **Cluster Health Check** | `getClusterStatus` | Verifies active segment status, mirroring, and replication health. |
-| **Read-Only Queries** | `executeQuery` | Executes optimized `SELECT` statements without modifying data. |
+| **Bloat Analysis** | `checkTableBloat` | Identifies oversized tables requiring `VACUUM` operations |
+| **Cluster Health Check** | `getClusterStatus` | Verifies segment status, mirroring, and replication health |
+| **Read-Only Queries** | `executeQuery` | Executes optimized `SELECT` statements without modifying data |
 
 ---
 
 ## ⚠️ Guardrails & Execution Rules
 
-* **Strictly Read-Only:** The agent is hard-blocked from executing `INSERT`, `UPDATE`, `DELETE`, or structural schema modifications.
-* **Instruction Reinforcement:** Dynamically injects system reminders directly into context windows to guarantee the AI consistently executes tools instead of hallucinating data.
-* **Schema-Aware Context:** Employs `introspect_database` automatically whenever table or column mappings are ambiguous.
-* **Non-Production Scope:** Designed for local evaluation, safe sandboxes, and development testing loops only.
+- **Strictly Read-Only:** The agent is hard-blocked from executing `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, or `TRUNCATE`.
+- **Schema-Aware:** Always queries `information_schema.columns` before accessing any table to avoid column name guessing.
+- **Thinking Block Stripping:** Internal `<think>` reasoning blocks from models like Qwen3 and DeepSeek-R1 are stripped before display.
+- **Non-Production Scope:** Designed for evaluation, safe sandboxes, and development testing only.
 
 ---
 
 ## 💡 Example Prompts
 
-Interact with the assistant using natural language commands, which map directly to secure database operations:
-
-* 🗣️ *"Check bloat in the 'sales' table"* ➔ Triggers the `checkTableBloat` tool.
-* 🗣️ *"Show cluster status"* ➔ Triggers the `getClusterStatus` tool.
-* 🗣️ *"List all users in the 'public' schema"* ➔ Safety-checks and executes an optimized `SELECT` query.
-
-Let me know your Greenplum task—I’ll provide exact SQL, diagnostics, and clear results! 🐘
+- 🗣️ *"Check bloat in the 'sales' table"* — triggers `checkTableBloat`
+- 🗣️ *"Show cluster status"* — triggers `getClusterStatus`
+- 🗣️ *"List all tables in the finance schema"* — safe `SELECT` via `executeQuery`
+- 🗣️ *"What indexes exist on the orders table?"* — schema introspection query
 
 ---
 
 ## 📌 Prerequisites
 
-Ensure your host environment meets the following specifications before launching the application:
-
-* **Greenplum MCP Server:** A deployed and active MCP server instance reachable via network IP.
-* **LLM Engine:** A localized runner (e.g., Ollama running `qwen3:30b`) or cloud provider credentials (OpenAI/Anthropic).
-* **Java Runtime:** Java Development Kit (JDK) 17 or higher.
-* **Build Automation (Optional):** Apache Maven 4.0.0+ (only required if building from source).
+| Requirement | Details |
+| :--- | :--- |
+| **Java** | JDK 17 or higher |
+| **Greenplum MCP Server** | Deployed and reachable via network |
+| **LLM Engine** | Ollama (local) or cloud API credentials (OpenAI / Anthropic) |
+| **Maven** | 4.0.0+ (only if building from source) |
 
 ---
 
-## 🚀 Setup & Execution Guide
+## 🚀 Local Deployment
 
-### 1. Clone the Source
-Pull down the project repository and navigate into the root directory:
-
+### 1. Clone the Repository
 ```bash
-git clone [https://github.com/sendjainabhi/greenplum-ai-agent.git](https://github.com/sendjainabhi/greenplum-ai-agent.git)
+git clone https://github.com/sendjainabhi/greenplum-ai-agent.git
 cd greenplum-ai-agent
-
 ```
 
-### 2. Initialize Local Dependencies (Optional)
-
-If utilizing a local deployment via Ollama instead of a cloud provider, start your model orchestration engine:
-
+### 2. Start Ollama (if using a local model)
 ```bash
 ollama serve
-
 ```
 
-### 3. Launch the Application
+### 3. Run the Application
 
-You do **not** need to hardcode API keys into configuration files. You can run the application using the pre-compiled executable or build it directly from the source code.
+**Option A — Pre-compiled JAR**
 
-#### Option A: Quick Start (Pre-Compiled Executable)
-
-A compiled `.jar` file and startup scripts are already included in the root directory of this repository for your convenience.
-
-**For Windows Users:**
-Simply double-click the `start.bat` file in the project folder, or run it via the command prompt:
-
-```cmd
-start.bat
-
-```
-
-**For Mac / Linux Users:**
-Open your terminal in the project folder, make the script executable (only needed once), and run it:
-
+Mac / Linux:
 ```bash
 chmod +x start.sh
 ./start.sh
-
 ```
 
-#### Option B: Run from Source (Development Mode)
+Windows:
+```cmd
+start.bat
+```
 
-If you prefer to compile and run the source code directly using Maven, run the following command in your terminal:
+**Option B — Build from Source**
+```bash
+mvn clean package -DskipTests
+java -jar target/greenplum-ai-agent-*.jar
+```
 
+**Option C — Maven Spring Boot**
 ```bash
 mvn clean spring-boot:run
+```
 
+### 4. Open the UI
+Navigate to `http://localhost:8080` in your browser.
+
+### Data & Log Location (Local)
+By default all data is stored under `~/.greenplum-agent/`:
+
+```
+~/.greenplum-agent/
+├── greenplum-agent.log          # Application log
+├── global-prompt.txt            # Admin global pre-training prompt (if set)
+└── users/
+    └── {username}/
+        ├── config.json          # User credentials, model config, PIN hash
+        └── memory/
+            └── {sessionId}.json # Per-session AI memory
+```
+
+To use a custom data directory:
+```bash
+export AGENT_DATA_DIR=/your/custom/path
+java -jar target/greenplum-ai-agent-*.jar
 ```
 
 ---
 
-## ⚙️ Administration & Configuration Workflow
+## ☁️ Cloud Foundry Deployment
 
-The application employs a streamlined security workflow. Anyone with access to the UI can use the agent, but only administrators can alter the global AI and MCP network routing configurations.
+### 1. Build the JAR
+```bash
+mvn clean package -DskipTests
+```
 
-### Standard Usage
+### 2. Create `manifest.yml`
+Create a `manifest.yml` in the project root:
 
-1. Open your web browser and navigate to `http://localhost:8080`.
-2. The UI will automatically restore your past 4 active tabs and reconnect to your preferred LLM.
-3. Begin chatting immediately!
+```yaml
+applications:
+  - name: greenplum-ai-agent
+    memory: 1G
+    disk_quota: 2G
+    instances: 1
+    path: target/greenplum-ai-agent-*.jar
+    buildpacks:
+      - java_buildpack
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
+      ADMIN_PIN: <your-admin-pin>
+```
 
-### Admin Configuration
+> **Note:** `ADMIN_PIN` sets the password for the **🔐 Admin** global prompt feature. If omitted, a default PIN is used — contact your deployment administrator for the value. Do not commit this file with the PIN to version control.
 
-To change the AI provider, model, or database connection details:
+### 3. Push to Cloud Foundry
+```bash
+cf login -a <api-endpoint>
+cf push
+```
 
-1. Click the **⚙️ Settings** button in the top right corner.
-2. Provide the administrator credentials when prompted (Default: `admin` / `admin`).
-3. You have two options to configure the system:
-* **Option A: Upload Config File:** Click **"📤 Upload Config File"** to automatically populate the fields using a formatted `.properties` or `.txt` template.
-* **Option B: Manual Entry:**
-* **AI Provider Type:** Select OpenAI Compatible, Ollama, or Anthropic.
-* **Endpoint / Base URL:** The routing URL for your chosen provider.
-* **Authentication / API Key:** Your secure token (if applicable).
-* **Model Name:** The exact model string (e.g., `qwen2.5:32b`, `gpt-4o`).
-* **MCP Server URL & Auth Header:** Your Greenplum MCP routing details.
+### 4. View Logs
+```bash
+cf logs greenplum-ai-agent --recent    # past logs
+cf logs greenplum-ai-agent             # live tail
+```
 
+### Persistent Storage on CF (Optional but Recommended)
 
+By default CF uses an **ephemeral filesystem** — user configs, chat memory, and the global prompt are lost when the container restarts or a new version is deployed. To persist data across deployments:
 
+1. Provision an NFS Volume Service through your CF operator.
+2. Bind it to the app and set the mount path via `AGENT_DATA_DIR`:
 
-4. Click **Test Connection** to verify your setup.
-5. Click **Save Configuration** to apply the changes globally across the server and locally cache them for 30 days.
+```yaml
+env:
+  AGENT_DATA_DIR: /mnt/gp-data
+  ADMIN_PIN: <your-admin-pin>
+services:
+  - greenplum-agent-volume
+```
 
-*(Note: Configurations are saved securely to a local `.properties` file on the backend server, ensuring stateless and secure frontend operations without exposing credentials in the browser).*
+Without a persistent volume, users will need to re-enter their credentials after each `cf push`. The app handles this gracefully — users can recover their session using the **"Already have an account?"** flow on the login screen.
+
+### CF Scaling Note
+When running **multiple instances** (`instances: 2+`), each instance has its own filesystem. The global admin prompt and user data are per-instance. For multi-instance deployments, a shared persistent volume (`AGENT_DATA_DIR` pointing to a shared NFS mount) is required to keep all instances in sync.
+
+---
+
+## ⚙️ First-Time Setup (All Environments)
+
+### User Account Setup
+1. Open the app — a **Create Your Account** modal appears.
+2. Choose a **username** (letters, numbers, `-` or `_`, 3–50 characters).
+3. Set a **PIN** (minimum 4 characters) and an optional hint.
+4. Click **Set PIN & Continue** — your account is ready.
+
+### Account Recovery (After Cache Clear)
+1. On the login screen, click **"Already have an account?"**
+2. Enter your username and PIN — the server verifies and restores your session.
+
+### Configure AI Provider
+1. Click **⚙️ Settings** in the header.
+2. Upload a `.properties` credential file or fill in the fields manually:
+   - **AI Provider:** Ollama / OpenAI Compatible / Anthropic
+   - **Endpoint / Base URL**
+   - **API Key** (if required)
+   - **Model Name** (e.g. `qwen3:30b`, `gpt-4o`, `claude-sonnet-4-6`)
+   - **MCP Server URL & Auth Header**
+3. Click **Test Connection** to verify, then **Save Configuration**.
+
+### Sample Credential File
+A sample `.properties` file is available for download directly from the Settings modal. Use it as a template to pre-fill all fields in one click.
+
+---
+
+## 🗑️ Managing Chat History
+
+| Action | What it does |
+| :--- | :--- |
+| 🗑️ (per tab) | Deletes that single conversation and its AI memory |
+| **Delete Chat History & Data** (header) | Deletes all conversations and all AI memory |
+| Both of the above | **Credentials and configuration are preserved** — you can chat again immediately |
+| **Reset PIN** (forgot PIN flow) | Deletes everything including credentials — full reset |
 
 ---
 
 ## 📄 Monitoring & Troubleshooting
 
-### Log Inspection
+### Local Logs
+```bash
+tail -f ~/.greenplum-agent/greenplum-agent.log
+```
 
-All query generations, tool invocations, and runtime execution graphs are piped to standard out and file appenders using robust SLF4J/Logback integration.
+### CF Logs
+```bash
+cf logs greenplum-ai-agent --recent
+cf logs greenplum-ai-agent             # live
+```
 
-* **Terminal Output:** Watch real-time outbound JSON-RPC MCP requests and inbound database payload streams natively in your console.
-* **File Appenders:** An application log file (`greenplum-agent.log`) is automatically generated in your current execution directory for historical debugging.
-* Monitor live transactional queries, trace network requests, track independent session-based memory saving, and review query optimization paths inside the output log streams.
-"""
+### Common Issues
 
+| Symptom | Likely Cause | Fix |
+| :--- | :--- | :--- |
+| "Configuration Required" on first chat | No credentials saved | Open Settings and save your config |
+| "Request Timed Out" | Model taking too long | Try a lighter model or a simpler query |
+| Status shows Disconnected | Model/MCP unreachable | Click Test Connection in Settings |
+| Data lost after CF push | No persistent volume | Use `AGENT_DATA_DIR` with a mounted volume |
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+Browser (index.html + app.js)
+    │
+    ├── POST /api/chat          → ChatController → GreenplumAgent (LangChain4j)
+    │                                                     │
+    │                                              GreenplumMcpTools
+    │                                                     │
+    │                                              Greenplum MCP Server
+    │                                                     │
+    │                                              Greenplum Database
+    │
+    ├── POST /api/settings      → ChatController → users/{userId}/config.json
+    ├── POST /api/auth/setup    → ChatController → users/{userId}/config.json (PIN hash)
+    ├── POST /api/auth/verify   → ChatController → server-side PIN verification
+    ├── POST /api/memory/clear  → ChatController → users/{userId}/memory/*.json
+    ├── POST /api/admin/verify  → ChatController → in-memory PIN check
+    └── POST /api/admin/save    → ChatController → global-prompt.txt
+```
+
+**Data flow for each chat request:**
+1. User types a question
+2. Server loads `global-prompt.txt` from disk (if set by admin)
+3. Server loads user's `systemPrompt` from their `config.json`
+4. Combined prompt → `GreenplumAgent.chat()` → LLM → optional MCP tool calls → response
+5. Response sanitized (thinking blocks stripped, invalid characters removed) → returned to browser
