@@ -67,6 +67,15 @@ Administrators can set a **global pre-training prompt** that is silently appende
 - Useful for org-wide policies: language restrictions, scope restrictions, tone requirements, data classification rules, etc.
 - Leave the global prompt blank to disable it.
 
+### ⭐ Saved Favourites
+Users can save any prompt as a favourite for quick reuse — ideal for recurring reports that are run weekly or monthly.
+
+- Click the **⭐ Save** button that appears below any message you type to save that prompt with a short label.
+- Saved favourites appear in the **⭐ Saved Favourites** panel in the left sidebar, persistent across sessions and browser refreshes.
+- Click any favourite to instantly populate the input box, ready to send or edit before sending.
+- Remove favourites individually with the 🗑️ button — they survive chat history clears and only reset on a full PIN reset.
+- Stored server-side per user at `~/.greenplum-agent/users/{userId}/favourites.json`.
+
 ---
 
 ## 🔧 Core Capabilities
@@ -160,6 +169,7 @@ By default all data is stored under `~/.greenplum-agent/`:
 └── users/
     └── {username}/
         ├── config.json          # User credentials, model config, PIN hash
+        ├── favourites.json      # User's saved favourite prompts
         └── memory/
             └── {sessionId}.json # Per-session AI memory
 ```
@@ -311,8 +321,11 @@ Browser (index.html + app.js)
     ├── POST /api/auth/setup    → ChatController → users/{userId}/config.json (PIN hash)
     ├── POST /api/auth/verify   → ChatController → server-side PIN verification
     ├── POST /api/memory/clear  → ChatController → users/{userId}/memory/*.json
-    ├── POST /api/admin/verify  → ChatController → in-memory PIN check
-    └── POST /api/admin/save    → ChatController → global-prompt.txt
+    ├── POST /api/admin/verify      → ChatController → in-memory PIN check
+    ├── POST /api/admin/save        → ChatController → global-prompt.txt
+    ├── POST /api/favourites/list   → ChatController → users/{userId}/favourites.json
+    ├── POST /api/favourites/save   → ChatController → users/{userId}/favourites.json
+    └── POST /api/favourites/delete → ChatController → users/{userId}/favourites.json
 ```
 
 **Data flow for each chat request:**

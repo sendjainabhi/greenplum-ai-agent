@@ -19,7 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -531,6 +534,114 @@ public class ChatController {
             }
         }
         return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
+    // Favourites — saved prompts per user
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/favourites/list")
+    ResponseEntity<Map<String, Object>> listFavourites(@RequestBody Map<String, String> request) {
+        String userId = request.getOrDefault("userId", "").trim();
+        if (userId.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        }
+        try {
+            List<Map<String, String>> favs = loadFavourites(userId);
+            return ResponseEntity.ok(Map.of("success", true, "favourites", favs));
+        } catch (Exception e) {
+            log.error("[FAV] List failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/favourites/save")
+    ResponseEntity<Map<String, Object>> saveFavourite(@RequestBody Map<String, String> request) {
+        String userId = request.getOrDefault("userId", "").trim();
+        String id     = request.getOrDefault("id",     "").trim();
+        String label  = request.getOrDefault("label",  "").trim();
+        String prompt = request.getOrDefault("prompt", "").trim();
+
+        if (userId.isEmpty() || prompt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId and prompt required"));
+        }
+        if (label.isEmpty()) label = prompt.length() > 50 ? prompt.substring(0, 50) + "..." : prompt;
+        if (id.isEmpty())    id    = "fav-" + System.currentTimeMillis();
+
+        try {
+            List<Map<String, String>> favs = loadFavourites(userId);
+            String finalId    = id;
+            String finalLabel = label;
+            boolean updated   = false;
+
+            for (int i = 0; i < favs.size(); i++) {
+                if (finalId.equals(favs.get(i).get("id"))) {
+                    Map<String, String> upd = new LinkedHashMap<>(favs.get(i));
+                    upd.put("label", finalLabel);
+                    favs.set(i, upd);
+                    updated = true;
+                    break;
+                }
+            }
+            if (!updated) {
+                Map<String, String> newFav = new LinkedHashMap<>();
+                newFav.put("id",        finalId);
+                newFav.put("label",     finalLabel);
+                newFav.put("prompt",    prompt);
+                newFav.put("createdAt", LocalDateTime.now().toString());
+                favs.add(0, newFav);
+            }
+            persistFavourites(userId, favs);
+            log.info("[FAV] Saved '{}' for user {}", finalLabel, userId);
+            return ResponseEntity.ok(Map.of("success", true, "id", finalId));
+        } catch (Exception e) {
+            log.error("[FAV] Save failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/favourites/delete")
+    ResponseEntity<Map<String, Object>> deleteFavourite(@RequestBody Map<String, String> request) {
+        String userId = request.getOrDefault("userId", "").trim();
+        String id     = request.getOrDefault("id",     "").trim();
+        if (userId.isEmpty() || id.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId and id required"));
+        }
+        try {
+            List<Map<String, String>> favs = loadFavourites(userId);
+            favs.removeIf(f -> id.equals(f.get("id")));
+            persistFavourites(userId, favs);
+            log.info("[FAV] Deleted {} for user {}", id, userId);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("[FAV] Delete failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    private File getFavouritesFile(String userId) {
+        File dir = new File(GreenplumAgentApplication.resolveDataDir()
+                + File.separator + "users" + File.separator + userId);
+        dir.mkdirs();
+        return new File(dir, "favourites.json");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, String>> loadFavourites(String userId) {
+        File f = getFavouritesFile(userId);
+        if (!f.exists()) return new ArrayList<>();
+        try {
+            return OBJECT_MAPPER.readValue(Files.readString(f.toPath(), StandardCharsets.UTF_8), List.class);
+        } catch (Exception e) {
+            log.warn("[FAV] Cannot read favourites for {}: {}", userId, e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    private void persistFavourites(String userId, List<Map<String, String>> favs) throws Exception {
+        Files.writeString(getFavouritesFile(userId).toPath(),
+                OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(favs),
+                StandardCharsets.UTF_8);
     }
 
     private static boolean isCausedByTimeout(Throwable t) {

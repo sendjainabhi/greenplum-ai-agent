@@ -21,6 +21,11 @@
         <button class="new-chat-btn" onclick="createNewChat()">+ New Chat</button>
         <div class="chat-list-header">Conversations (Max 4)</div>
         <div class="chat-list" id="chatList"></div>
+
+        <div class="chat-list-header" style="margin-top:16px; display:flex; justify-content:space-between; align-items:center;">
+            <span>⭐ Saved Favourites</span>
+        </div>
+        <div class="chat-list" id="favouritesList" style="max-height:none;"></div>
     </div>
 
     <div class="chat-container" id="appContainer">
@@ -182,6 +187,32 @@
     </div>
 </div>
 
+<!-- ===================== SAVE FAVOURITE MODAL ===================== -->
+<div class="modal-overlay" id="saveFavModal" style="display: none;">
+    <div class="modal-content" style="max-width: 460px;">
+        <h3>⭐ Save as Favourite</h3>
+        <p style="font-size:0.9em; color:#64748b; margin-bottom:14px;">
+            Give this prompt a short label so you can find it quickly in the Saved Favourites list.
+        </p>
+        <div class="form-group">
+            <label>Label</label>
+            <input type="text" id="favLabelInput" placeholder="e.g. Weekly Revenue Report" maxlength="80"
+                   onkeypress="if(event.key==='Enter') confirmSaveFav()">
+        </div>
+        <div class="form-group">
+            <label>Prompt</label>
+            <textarea id="favPromptInput" rows="4"
+                      style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9em; resize:vertical; width:100%; box-sizing:border-box;"
+                      placeholder="The prompt text…"></textarea>
+        </div>
+        <div id="saveFavError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
+        <div class="modal-actions" style="justify-content:space-between;">
+            <button class="btn-cancel" onclick="closeSaveFavModal()">Cancel</button>
+            <button class="btn-save" onclick="confirmSaveFav()">Save</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===================== ADMIN MODAL ===================== -->
 <div class="modal-overlay" id="adminModal" style="display: none;">
     <div class="modal-content" style="max-width: 520px;">
@@ -320,6 +351,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=14"></script>
+<script src="/js/app.js?v=15"></script>
 </body>
 </html>

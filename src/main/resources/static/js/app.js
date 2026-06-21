@@ -381,6 +381,122 @@ async function saveGlobalPrompt() {
 }
 
 // =============================================================================
+// FAVOURITES — saved prompts
+// =============================================================================
+
+async function loadFavourites() {
+    if (!CURRENT_USER_ID) return;
+    try {
+        const res  = await fetch('/api/favourites/list', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID })
+        });
+        const data = await res.json();
+        if (data.success) { favourites = data.favourites || []; renderFavourites(); }
+    } catch (e) {}
+}
+
+function renderFavourites() {
+    const list = document.getElementById('favouritesList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (favourites.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'font-size:0.78em; color:#94a3b8; padding:6px 10px;';
+        empty.textContent = 'No saved favourites yet. Click ⭐ Save on any message.';
+        list.appendChild(empty);
+        return;
+    }
+
+    favourites.forEach(fav => {
+        const div = document.createElement('div');
+        div.className = 'chat-item';
+        div.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+        div.title = fav.prompt;
+
+        const labelSpan = document.createElement('span');
+        labelSpan.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-grow:1; cursor:pointer;';
+        labelSpan.textContent = fav.label;
+        labelSpan.onclick = () => runFavourite(fav.prompt);
+
+        const btnStyle = 'background:transparent; border:none; cursor:pointer; opacity:0.5; padding:0 4px; font-size:0.85em;';
+
+        const delBtn = document.createElement('button');
+        delBtn.innerHTML = '🗑️';
+        delBtn.style.cssText = btnStyle;
+        delBtn.title = 'Remove favourite';
+        delBtn.onmouseover = () => delBtn.style.opacity = '1';
+        delBtn.onmouseout  = () => delBtn.style.opacity = '0.5';
+        delBtn.onclick = (e) => { e.stopPropagation(); deleteFavourite(fav.id); };
+
+        div.appendChild(labelSpan);
+        div.appendChild(delBtn);
+        list.appendChild(div);
+    });
+}
+
+function runFavourite(prompt) {
+    const input = document.getElementById('prompt');
+    if (!input) return;
+    input.value        = prompt;
+    input.style.height = 'auto';
+    input.style.height = input.scrollHeight + 'px';
+    input.focus();
+}
+
+function openSaveFavModal(promptText) {
+    document.getElementById('favLabelInput').value        = '';
+    document.getElementById('favPromptInput').value       = promptText || '';
+    document.getElementById('saveFavError').style.display = 'none';
+    document.getElementById('saveFavModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('favLabelInput').focus(), 100);
+}
+
+function closeSaveFavModal() {
+    document.getElementById('saveFavModal').style.display = 'none';
+}
+
+async function confirmSaveFav() {
+    const label  = document.getElementById('favLabelInput').value.trim();
+    const prompt = document.getElementById('favPromptInput').value.trim();
+    const errEl  = document.getElementById('saveFavError');
+    errEl.style.display = 'none';
+
+    if (!prompt) {
+        errEl.textContent = 'Prompt cannot be empty.';
+        errEl.style.display = 'block'; return;
+    }
+
+    try {
+        const res  = await fetch('/api/favourites/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, label, prompt })
+        });
+        const data = await res.json();
+        if (!data.success) {
+            errEl.textContent = data.error || 'Could not save favourite.';
+            errEl.style.display = 'block'; return;
+        }
+        closeSaveFavModal();
+        await loadFavourites();
+    } catch (e) {
+        errEl.textContent = 'Could not reach server.';
+        errEl.style.display = 'block';
+    }
+}
+
+async function deleteFavourite(id) {
+    try {
+        await fetch('/api/favourites/delete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, id })
+        });
+        await loadFavourites();
+    } catch (e) {}
+}
+
+// =============================================================================
 // APP BOOT
 // =============================================================================
 
@@ -416,6 +532,7 @@ function bootApp() {
     ]);
     setupTextarea();
     initSessions();
+    loadFavourites();
     autoConnect();
 }
 
@@ -429,6 +546,7 @@ let chatSessions      = safeParse('gp_sessions', []);
 if (!Array.isArray(chatSessions)) chatSessions = [];
 let currentSessionId      = localStorage.getItem('gp_current_session');
 let currentChatUiHistory  = [];
+let favourites            = [];
 
 function initSessions() {
     if (!currentSessionId || chatSessions.length === 0) createNewChat(false);
@@ -755,6 +873,18 @@ function addMessageToDOM(text, className, isMarkdown) {
         }
     } else {
         msgDiv.textContent = text;
+    }
+
+    if (className === 'user-message') {
+        const favBtn = document.createElement('button');
+        favBtn.innerHTML = '⭐ Save';
+        favBtn.title     = 'Save as favourite';
+        favBtn.style.cssText = 'margin-top:4px; background:transparent; border:1px solid #fbbf24; color:#b45309; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75em; align-self:flex-end; opacity:0.7; transition:opacity 0.2s;';
+        favBtn.onmouseover = () => favBtn.style.opacity = '1';
+        favBtn.onmouseout  = () => favBtn.style.opacity = '0.7';
+        const capturedText = text;
+        favBtn.onclick = () => openSaveFavModal(capturedText);
+        wrapperDiv.appendChild(favBtn);
     }
 
     if (className === 'ai-message' && !text.includes('⚠️ Request cancelled') && !text.includes('Error connecting')) {
