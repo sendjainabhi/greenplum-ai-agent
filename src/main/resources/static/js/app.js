@@ -52,16 +52,35 @@ async function hashPin(pin) {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function hasPinSet() {
-    return !!localStorage.getItem('gp_credential_hash');
-}
 
 function isSessionUnlocked() {
-    return sessionStorage.getItem('gp_unlocked') === 'true';
+    return localStorage.getItem('gp_unlocked') === 'true';
 }
 
 function markSessionUnlocked() {
-    sessionStorage.setItem('gp_unlocked', 'true');
+    localStorage.setItem('gp_unlocked', 'true');
+}
+
+function clearUnlockedState() {
+    localStorage.removeItem('gp_unlocked');
+    localStorage.removeItem('gp_credential_hash');
+}
+
+// Silently verify the cached PIN hash against the server on every boot.
+// Returns: true = valid, false = invalid (stale/deleted), null = network error (offline)
+async function silentVerifyWithServer() {
+    const hash = localStorage.getItem('gp_credential_hash');
+    if (!CURRENT_USER_ID || !hash) return false;
+    try {
+        const res  = await fetch('/api/auth/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: hash })
+        });
+        const data = await res.json();
+        return data.success === true;
+    } catch (e) {
+        return null; // network error — treat as offline, do not force sign-out
+    }
 }
 
 // --- First-visit PIN setup ---
@@ -131,6 +150,7 @@ function showPinEntry() {
 async function confirmEntryPin() {
     const pin   = document.getElementById('entryPin').value;
     const errEl = document.getElementById('pinEntryError');
+    const btn   = document.querySelector('#pinEntryModal .btn-save');
     errEl.style.display = 'none';
 
     if (!pin) {
@@ -138,18 +158,32 @@ async function confirmEntryPin() {
         errEl.style.display = 'block'; return;
     }
 
-    const hash   = await hashPin(pin);
-    const stored = localStorage.getItem('gp_credential_hash');
-
-    if (hash === stored) {
-        markSessionUnlocked();
-        document.getElementById('pinEntryModal').style.display = 'none';
-        document.getElementById('entryPin').value = '';
-        bootApp();
-    } else {
-        errEl.textContent = 'Incorrect PIN. Please try again.';
+    // Always verify against server — browser cache is never used to authenticate
+    btn.textContent = '⏳ Verifying...'; btn.disabled = true;
+    try {
+        const hash = await hashPin(pin);
+        const res  = await fetch('/api/auth/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: hash })
+        });
+        const data = await res.json();
+        if (data.success) {
+            localStorage.setItem('gp_credential_hash', hash); // update for silent boot verify only
+            markSessionUnlocked();
+            document.getElementById('pinEntryModal').style.display = 'none';
+            document.getElementById('entryPin').value = '';
+            bootApp();
+        } else {
+            localStorage.removeItem('gp_credential_hash'); // clear stale cache
+            errEl.textContent = 'Incorrect PIN. Please try again.';
+            errEl.style.display = 'block';
+            document.getElementById('entryPin').value = '';
+        }
+    } catch (e) {
+        errEl.textContent = 'Cannot reach server. Please check your connection.';
         errEl.style.display = 'block';
-        document.getElementById('entryPin').value = '';
+    } finally {
+        btn.textContent = 'Unlock'; btn.disabled = false;
     }
 }
 
@@ -194,13 +228,14 @@ async function confirmRecover() {
         errEl.textContent = 'Could not reach the server.';
         errEl.style.display = 'block'; return;
     } finally {
-        btn.textContent = 'Recover Account'; btn.disabled = false;
+        btn.textContent = 'Sign In'; btn.disabled = false;
     }
 
-    // Restore identity
+    // Restore identity — also restore pinHint so "Forgot PIN?" works on new browsers
     CURRENT_USER_ID = username;
     localStorage.setItem('gp_user_id', username);
     localStorage.setItem('gp_credential_hash', hash);
+    if (data.pinHint) localStorage.setItem('gp_pin_hint', data.pinHint);
     markSessionUnlocked();
     document.getElementById('recoverModal').style.display = 'none';
     document.getElementById('recoverPin').value = '';
@@ -263,14 +298,26 @@ async function changePin() {
     }
 
     const currentHash = await hashPin(current);
-    if (currentHash !== localStorage.getItem('gp_credential_hash')) {
-        errEl.textContent = 'Current PIN is incorrect.';
+
+    // Always verify current PIN against server (not just localStorage)
+    try {
+        const verifyRes  = await fetch('/api/auth/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: currentHash })
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyData.success) {
+            errEl.textContent = 'Current PIN is incorrect.';
+            errEl.style.display = 'block'; return;
+        }
+    } catch (e) {
+        errEl.textContent = 'Could not reach server to verify current PIN.';
         errEl.style.display = 'block'; return;
     }
 
     const newHash = await hashPin(newPin);
 
-    // Update server copy so recovery still works after cache clear
+    // Save new PIN to server first, then update localStorage
     try {
         const res  = await fetch('/api/auth/setup', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -279,8 +326,8 @@ async function changePin() {
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Server error');
     } catch (e) {
-        errEl.textContent = '⚠️ PIN updated locally but failed to sync to server: ' + e.message;
-        errEl.style.display = 'block';
+        errEl.textContent = '❌ Failed to save new PIN to server: ' + e.message;
+        errEl.style.display = 'block'; return;
     }
 
     localStorage.setItem('gp_credential_hash', newHash);
@@ -306,6 +353,10 @@ function openAdminModal() {
     document.getElementById('adminEditorSection').style.display = 'none';
     document.getElementById('adminPinInput').value = '';
     document.getElementById('adminAuthError').style.display = 'none';
+    // Reset button — may have been left disabled after a previous successful verify
+    const btn = document.getElementById('adminAuthBtn');
+    btn.textContent = 'Access Admin';
+    btn.disabled    = false;
     setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
 }
 
@@ -463,6 +514,7 @@ async function confirmSaveFav() {
     const errEl  = document.getElementById('saveFavError');
     errEl.style.display = 'none';
 
+    if (!CURRENT_USER_ID) { errEl.textContent = 'Not logged in.'; errEl.style.display = 'block'; return; }
     if (!prompt) {
         errEl.textContent = 'Prompt cannot be empty.';
         errEl.style.display = 'block'; return;
@@ -487,6 +539,7 @@ async function confirmSaveFav() {
 }
 
 async function deleteFavourite(id) {
+    if (!CURRENT_USER_ID) return;
     try {
         await fetch('/api/favourites/delete', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -500,13 +553,33 @@ async function deleteFavourite(id) {
 // APP BOOT
 // =============================================================================
 
-window.onload = function () {
-    if (!hasPinSet()) {
-        showPinSetup();
-    } else if (!isSessionUnlocked()) {
-        showPinEntry();
-    } else {
-        bootApp();
+window.onload = async function () {
+    try {
+        if (CURRENT_USER_ID) {
+            if (isSessionUnlocked()) {
+                // Already unlocked — silently re-verify with server to catch stale cache
+                const verified = await silentVerifyWithServer();
+                if (verified === true) {
+                    bootApp();
+                } else if (verified === false) {
+                    // Server rejected — PIN changed or account removed
+                    clearUnlockedState();
+                    showPinEntry();
+                } else {
+                    // null = network error — allow boot in offline mode
+                    bootApp();
+                }
+            } else {
+                showPinEntry();
+            }
+        } else {
+            // No username known — show Sign In as default
+            showRecoverAccount();
+        }
+    } catch (e) {
+        // Safety net — never leave the user on a blank page
+        console.error('[boot] Unexpected error:', e);
+        showRecoverAccount();
     }
 };
 
@@ -1145,7 +1218,8 @@ function clearAllLocalData(includingPin) {
         localStorage.removeItem('gp_credential_hash');
         localStorage.removeItem('gp_pin_hint');
         localStorage.removeItem('gp_user_id');
-        sessionStorage.removeItem('gp_unlocked');
+        localStorage.removeItem('gp_unlocked');
+        CURRENT_USER_ID = null;
     }
 
     // Reset in-memory state

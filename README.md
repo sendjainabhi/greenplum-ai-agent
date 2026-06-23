@@ -24,11 +24,13 @@ A specialized, read-only Greenplum Database AI assistant designed to help you an
 
 ## ✨ Features
 
-### 🔒 PIN Authentication & Account Recovery
+### 🔒 PIN Authentication & Secure Login
 - Every user creates a **username + PIN** on first visit — no email, no password manager needed.
-- The PIN hash is stored both in the browser and on the server, so even after a browser cache clear, users can recover their account by entering their username and PIN.
-- PIN hints are supported for recovery assistance.
-- Users can change their PIN at any time from **⚙️ Settings**.
+- **PIN is always verified server-side** — the browser cache is never used as the authentication authority.
+- Opening a new browser window, tab, or incognito mode shows a **Sign In** screen (username + PIN) — no impression of a lost account.
+- On the same browser, subsequent tabs and windows boot directly without re-entering the PIN.
+- PIN hints are supported; hints are restored automatically after signing in on a new browser.
+- Users can change their PIN at any time from **⚙️ Settings** — current PIN is verified against the server before the new one is saved.
 
 ### 💬 Multi-Session Chat
 - Run up to **4 independent conversation tabs** simultaneously.
@@ -235,7 +237,7 @@ services:
   - greenplum-agent-volume
 ```
 
-Without a persistent volume, users will need to re-enter their credentials after each `cf push`. The app handles this gracefully — users can recover their session using the **"Already have an account?"** flow on the login screen.
+Without a persistent volume, users will need to re-enter their credentials after each `cf push`. The app handles this gracefully — users can sign back in using the **Sign In** screen that appears on first open in any new browser or after a cache clear.
 
 ### CF Scaling Note
 When running **multiple instances** (`instances: 2+`), each instance has its own filesystem. The global admin prompt and user data are per-instance. For multi-instance deployments, a shared persistent volume (`AGENT_DATA_DIR` pointing to a shared NFS mount) is required to keep all instances in sync.
@@ -244,15 +246,20 @@ When running **multiple instances** (`instances: 2+`), each instance has its own
 
 ## ⚙️ First-Time Setup (All Environments)
 
-### User Account Setup
-1. Open the app — a **Create Your Account** modal appears.
-2. Choose a **username** (letters, numbers, `-` or `_`, 3–50 characters).
-3. Set a **PIN** (minimum 4 characters) and an optional hint.
-4. Click **Set PIN & Continue** — your account is ready.
+### User Account Setup (First Visit)
+1. Open the app — a **Sign In** screen appears.
+2. Click **"New user? Create account"** to open the account creation modal.
+3. Choose a **username** (letters, numbers, `-` or `_`, 3–50 characters).
+4. Set a **PIN** (minimum 4 characters) and an optional hint.
+5. Click **Set PIN & Continue** — your account is created and the app loads immediately.
 
-### Account Recovery (After Cache Clear)
-1. On the login screen, click **"Already have an account?"**
-2. Enter your username and PIN — the server verifies and restores your session.
+### Sign In (Returning User — New Browser or Incognito)
+1. Open the app in any browser or incognito window — the **Sign In** screen appears by default.
+2. Enter your username and PIN.
+3. Click **Sign In** — the server verifies your PIN and restores your session.
+4. Your PIN hint is restored automatically for future reference.
+
+> On the **same browser**, subsequent tabs and windows boot directly without re-entering the PIN.
 
 ### Configure AI Provider
 1. Click **⚙️ Settings** in the header.
@@ -275,8 +282,8 @@ A sample `.properties` file is available for download directly from the Settings
 | :--- | :--- |
 | 🗑️ (per tab) | Deletes that single conversation and its AI memory |
 | **Delete Chat History & Data** (header) | Deletes all conversations and all AI memory |
-| Both of the above | **Credentials and configuration are preserved** — you can chat again immediately |
-| **Reset PIN** (forgot PIN flow) | Deletes everything including credentials — full reset |
+| Both of the above | **Credentials, PIN, and configuration are preserved** — you can chat again immediately |
+| **Reset PIN** (from the Sign In screen → Create Account → full reset) | Deletes everything including credentials — requires setting up a new account |
 
 ---
 
@@ -297,10 +304,12 @@ cf logs greenplum-ai-agent             # live
 
 | Symptom | Likely Cause | Fix |
 | :--- | :--- | :--- |
+| Sign In screen appears on a new browser / incognito | Expected behaviour — PIN verification is always server-side | Enter your username and PIN to sign back in |
 | "Configuration Required" on first chat | No credentials saved | Open Settings and save your config |
 | "Request Timed Out" | Model taking too long | Try a lighter model or a simpler query |
 | Status shows Disconnected | Model/MCP unreachable | Click Test Connection in Settings |
 | Data lost after CF push | No persistent volume | Use `AGENT_DATA_DIR` with a mounted volume |
+| Admin modal won't reopen without a page refresh | Fixed in latest release | Update to the latest JAR |
 
 ---
 

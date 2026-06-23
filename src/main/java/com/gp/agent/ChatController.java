@@ -120,7 +120,8 @@ public class ChatController {
             }
             if (pinHash.equals(stored)) {
                 log.info("[AUTH] Verified login for user {}", userId);
-                return ResponseEntity.ok(Map.of("success", true, "userId", userId));
+                String hint = config.getOrDefault("pinHint", "");
+                return ResponseEntity.ok(Map.of("success", true, "userId", userId, "pinHint", hint));
             }
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect PIN."));
         } catch (Exception e) {
@@ -137,10 +138,15 @@ public class ChatController {
     ResponseEntity<Map<String, Object>> saveSettings(@RequestBody Map<String, String> req) {
         String userId = req.getOrDefault("userId", "default-user");
         try {
-            Map<String, String> data = new LinkedHashMap<>(req);
-            data.remove("userId");
-            String json = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data);
-            Files.writeString(getConfigFile(userId).toPath(), json, StandardCharsets.UTF_8);
+            File configFile = getConfigFile(userId);
+            // Preserve existing PIN fields — read current config first, then merge new settings on top
+            Map<String, String> data = configFile.exists()
+                    ? new LinkedHashMap<>(loadOrSeedConfig(userId, null))
+                    : new LinkedHashMap<>();
+            req.forEach((k, v) -> { if (!k.equals("userId")) data.put(k, v); });
+            Files.writeString(configFile.toPath(),
+                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data),
+                    StandardCharsets.UTF_8);
             agentCache.remove(userId);
             configHashCache.remove(userId);
             log.info("[CONFIG] Saved for user {}", userId);

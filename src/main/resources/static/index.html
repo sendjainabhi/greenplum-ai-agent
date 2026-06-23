@@ -89,18 +89,18 @@
         </div>
         <div id="pinSetupError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="showRecoverAccount()">Already have an account?</button>
+            <button class="btn-cancel" onclick="showRecoverAccount()">← Back to Sign In</button>
             <button class="btn-save" onclick="confirmSetupPin()">Set PIN &amp; Continue</button>
         </div>
     </div>
 </div>
 
-<!-- ===================== ACCOUNT RECOVERY (cache cleared) ===================== -->
+<!-- ===================== SIGN IN (default for unknown browser / incognito) ===================== -->
 <div class="modal-overlay" id="recoverModal" style="display: none;">
     <div class="modal-content" style="max-width: 380px;">
-        <h3>🔑 Recover Your Account</h3>
+        <h3>👋 Sign In</h3>
         <p style="font-size:0.9em; color:#64748b; margin-bottom:18px;">
-            Enter your username and PIN to restore access to your existing account and data.
+            Enter your username and PIN to access your account.
         </p>
         <div class="form-group">
             <label>Username</label>
@@ -114,8 +114,8 @@
         </div>
         <div id="recoverError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="cancelRecover()">← Back</button>
-            <button class="btn-save" onclick="confirmRecover()">Recover Account</button>
+            <button class="btn-cancel" onclick="cancelRecover()">New user? Create account</button>
+            <button class="btn-save" onclick="confirmRecover()">Sign In</button>
         </div>
     </div>
 </div>
@@ -351,6 +351,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=15"></script>
+<script src="/js/app.js?v=20"></script>
 </body>
 </html>
