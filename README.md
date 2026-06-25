@@ -36,16 +36,6 @@ An intelligent, read-only AI assistant for Greenplum database clusters. It conne
 
 ## Features
 
-### 🎨 Mint & Forest Theme
-
-- **Colour palette** — forest green (`#2d6a4f`) primary; pale mint backgrounds; white surfaces
-- **Dark mode** — enabled by default; deep forest greens (`#071510` body, `#0e2318` surfaces)
-- **Light mode** — soft mint wash (`#f0fdf4`) body with white surfaces and mint-tinted borders
-- **Theme toggle** — `🌙 Dark Mode` / `☀️ Light Mode` button in the header; switches instantly; preference saved to server and restored on any device
-- **Greenplum logo** — SVG logo mark in the header bar; renders correctly in both dark and light mode
-- **3D buttons** — all buttons use layered `box-shadow` with a press-down animation on click
-- **Sidebar depth** — forest-green separator shadow on the left panel; active session gets a green left accent bar
-
 ### 🔒 Authentication & Security
 
 - **PIN-based accounts** — username + PIN (min 4 chars) with an optional hint; plain PIN never stored on disk
@@ -67,16 +57,6 @@ An intelligent, read-only AI assistant for Greenplum database clusters. It conne
 - **Session delete** — click 🗑️ to remove a session and its AI memory from the server
 - **Cancel in-flight** — a **Cancel** button replaces Send while a request is running; aborts immediately
 - **Prompt autocomplete** — debounced suggestions from your prompt history appear as you type
-
-### 📊 Rich Response Formatting
-
-- **Markdown** — full CommonMark via `marked.js`; headings, lists, bold, italic, blockquotes
-- **Syntax-highlighted code** — `highlight.js` code blocks with a dark theme
-- **Copy button** — every code block has a `📋 Copy` button; confirms with `✅ Copied!` for 2 seconds
-- **Tables** — horizontal scroll; forest-green headers; alternating mint-tinted rows
-- **Inline charts** — Chart.js bar, line, and pie charts rendered from `chart` code blocks
-- **Thinking block strip** — `<think>…</think>` from Qwen3 / DeepSeek-R1 removed before display
-- **Token streaming** — tokens stream in real-time; spinner shows while in-flight
 
 ### 📄 PDF Export
 
