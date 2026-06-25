@@ -1,5 +1,6 @@
 #!/bin/bash
-DATA_DIR="${AGENT_DATA_DIR:-$HOME/.greenplum-agent}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR="${AGENT_DATA_DIR:-$SCRIPT_DIR}"
 PID_FILE="$DATA_DIR/agent.pid"
 
 if [ ! -f "$PID_FILE" ]; then

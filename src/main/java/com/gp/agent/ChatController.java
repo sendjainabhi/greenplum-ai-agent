@@ -131,6 +131,64 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
+    // Auth status — check server filesystem for any registered user
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/auth/status")
+    ResponseEntity<Map<String, Object>> authStatus() {
+        try {
+            File usersDir = new File(GreenplumAgentApplication.resolveDataDir()
+                    + File.separator + "users");
+            if (!usersDir.exists()) {
+                return ResponseEntity.ok(Map.of("registered", false));
+            }
+            File[] userDirs = usersDir.listFiles(File::isDirectory);
+            if (userDirs == null || userDirs.length == 0) {
+                return ResponseEntity.ok(Map.of("registered", false));
+            }
+            java.util.Arrays.sort(userDirs, (a, b) -> a.getName().compareTo(b.getName()));
+            for (File userDir : userDirs) {
+                Map<String, String> config = loadOrSeedConfig(userDir.getName(), null);
+                if (!config.getOrDefault("pinHash", "").isEmpty()) {
+                    log.debug("[AUTH] Status: user {} is registered", userDir.getName());
+                    return ResponseEntity.ok(Map.of("registered", true, "userId", userDir.getName()));
+                }
+            }
+            return ResponseEntity.ok(Map.of("registered", false));
+        } catch (Exception e) {
+            log.error("[AUTH] Status check failed: {}", e.getMessage());
+            return ResponseEntity.ok(Map.of("registered", false));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Load settings from server filesystem → sent to browser on every boot
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/settings/load")
+    ResponseEntity<Map<String, Object>> loadSettingsFromFile(@RequestParam String userId) {
+        if (userId == null || userId.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        }
+        try {
+            File configFile = getConfigFile(userId.trim());
+            if (!configFile.exists()) {
+                return ResponseEntity.ok(Map.of("success", false));
+            }
+            Map<String, String> config = loadOrSeedConfig(userId.trim(), null);
+            // Never send PIN hash to the browser
+            Map<String, Object> safe = new LinkedHashMap<>(config);
+            safe.remove("pinHash");
+            safe.remove("pinHint");
+            log.debug("[SETTINGS] Loaded from file for user {}", userId);
+            return ResponseEntity.ok(Map.of("success", true, "config", safe));
+        } catch (Exception e) {
+            log.error("[SETTINGS] Load failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Save settings
     // -------------------------------------------------------------------------
 
@@ -540,6 +598,58 @@ public class ChatController {
             }
         }
         return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
+    // Sessions — chat history persisted on server filesystem per user
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/sessions/load")
+    ResponseEntity<Map<String, Object>> loadSessions(@RequestParam String userId) {
+        if (userId == null || userId.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        }
+        try {
+            File sessionsFile = getSessionsFile(userId.trim());
+            if (!sessionsFile.exists()) {
+                return ResponseEntity.ok(Map.of("success", false));
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = OBJECT_MAPPER.readValue(
+                    Files.readString(sessionsFile.toPath(), StandardCharsets.UTF_8), Map.class);
+            data.put("success", true);
+            return ResponseEntity.ok(data);
+        } catch (Exception e) {
+            log.error("[SESSIONS] Load failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/sessions/save")
+    ResponseEntity<Map<String, Object>> saveSessions(@RequestBody Map<String, Object> request) {
+        String userId = (String) request.getOrDefault("userId", "");
+        if (userId.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        }
+        try {
+            Map<String, Object> data = new LinkedHashMap<>(request);
+            data.remove("userId");
+            Files.writeString(getSessionsFile(userId.trim()).toPath(),
+                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data),
+                    StandardCharsets.UTF_8);
+            log.debug("[SESSIONS] Saved for user {}", userId);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("[SESSIONS] Save failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    private File getSessionsFile(String userId) {
+        File dir = new File(GreenplumAgentApplication.resolveDataDir()
+                + File.separator + "users" + File.separator + userId);
+        dir.mkdirs();
+        return new File(dir, "sessions.json");
     }
 
     // -------------------------------------------------------------------------

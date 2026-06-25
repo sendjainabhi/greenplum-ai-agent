@@ -26,6 +26,7 @@ public class GreenplumAgentApplication {
     static String resolveDataDir() {
         String env = System.getenv("AGENT_DATA_DIR");
         if (env != null && !env.trim().isEmpty()) return env.trim();
-        return System.getProperty("user.home") + File.separator + ".greenplum-agent";
+        // Default: the directory the JVM was launched from (i.e. the app directory)
+        return System.getProperty("user.dir");
     }
 }

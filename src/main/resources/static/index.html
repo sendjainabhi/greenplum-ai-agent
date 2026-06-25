@@ -19,7 +19,7 @@
 <div class="app-layout">
     <div class="sidebar" id="sidebar">
         <button class="new-chat-btn" onclick="createNewChat()">+ New Chat</button>
-        <div class="chat-list-header">Conversations (Max 4)</div>
+        <div class="chat-list-header">Conversations (Max 10)</div>
         <div class="chat-list" id="chatList"></div>
 
         <div class="chat-list-header" style="margin-top:16px; display:flex; justify-content:space-between; align-items:center;">
@@ -31,15 +31,19 @@
     <div class="chat-container" id="appContainer">
         <div class="header">
             <div style="display: flex; align-items: center; gap: 15px;">
-                <span>Greenplum AI Analytics Agent</span>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <img src="/images/logo.svg" alt="Greenplum" style="width:36px; height:36px; flex-shrink:0; display:block;" />
+                    <span style="font-size:1.15em; letter-spacing:0.01em;">Greenplum <span style="font-weight:400; opacity:0.85;">AI Analytics Agent</span></span>
+                </div>
                 <div class="status-container">
                     <span id="headerStatusDot" class="status-dot status-unknown"></span>
                     <span id="headerStatusText">Disconnected</span>
                 </div>
             </div>
             <div class="header-actions">
-                <button class="settings-btn" onclick="deleteAllData()" style="background: transparent;">🗑️ Delete Chat History &amp; Data</button>
-                <button class="settings-btn" onclick="openAdminModal()" style="background: transparent;">🔐 Admin</button>
+                <button class="settings-btn" id="themeToggleBtn" onclick="toggleTheme()">🌙 Dark Mode</button>
+                <button class="settings-btn" onclick="deleteAllData()" style="background: transparent;">🗑️ Clear All Data</button>
+                <button class="settings-btn" onclick="openAdminModal()" style="background: transparent;">🔐 Admin Panel</button>
                 <button class="settings-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
             </div>
         </div>
@@ -68,9 +72,9 @@
         </p>
         <div class="form-group">
             <label>Username</label>
-            <input type="text" id="setupUsername" placeholder="e.g. abhishek" maxlength="50"
+            <input type="text" id="setupUsername" placeholder="e.g. john or john_doe (no email)" maxlength="50"
                    onkeypress="if(event.key==='Enter') document.getElementById('setupPin').focus()">
-            <div style="font-size:0.78em; color:#94a3b8; margin-top:4px;">3–50 characters: letters, numbers, - or _</div>
+            <div style="font-size:0.78em; color:#94a3b8; margin-top:4px;">Letters, numbers, hyphens and underscores only — no spaces, dots or @ symbols</div>
         </div>
         <div class="form-group">
             <label>PIN</label>
@@ -89,8 +93,8 @@
         </div>
         <div id="pinSetupError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="showRecoverAccount()">← Back to Sign In</button>
-            <button class="btn-save" onclick="confirmSetupPin()">Set PIN &amp; Continue</button>
+            <button class="btn-cancel" onclick="showRecoverAccount()">← Back</button>
+            <button class="btn-save" onclick="confirmSetupPin()">Create PIN</button>
         </div>
     </div>
 </div>
@@ -113,9 +117,14 @@
                    onkeypress="if(event.key==='Enter') confirmRecover()">
         </div>
         <div id="recoverError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
-        <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="cancelRecover()">New user? Create account</button>
+        <div class="modal-actions" style="justify-content: flex-end;">
             <button class="btn-save" onclick="confirmRecover()">Sign In</button>
+        </div>
+        <div style="text-align:center; margin-top:14px;">
+            <a href="#" onclick="cancelRecover(); return false;"
+               style="font-size:0.85em; color:var(--primary-color); text-decoration:none;">
+                Don't have an account? <strong>Create one</strong>
+            </a>
         </div>
     </div>
 </div>
@@ -131,7 +140,7 @@
         <div id="pinEntryError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content: space-between;">
             <button class="btn-cancel" onclick="showForgotPin()">Forgot PIN?</button>
-            <button class="btn-save" onclick="confirmEntryPin()">Unlock</button>
+            <button class="btn-save" onclick="confirmEntryPin()">Unlock →</button>
         </div>
     </div>
 </div>
@@ -146,8 +155,8 @@
             <strong>This will delete all conversations and credentials.</strong>
         </p>
         <div class="modal-actions" style="justify-content: space-between;">
-            <button class="btn-cancel" onclick="backToPinEntry()">← Back to PIN Entry</button>
-            <button class="btn-danger" onclick="showResetConfirm()">Reset PIN</button>
+            <button class="btn-cancel" onclick="backToPinEntry()">← Back</button>
+            <button class="btn-danger" onclick="showResetConfirm()">Reset Account</button>
         </div>
     </div>
 </div>
@@ -155,7 +164,7 @@
 <!-- ===================== RESET CONFIRMATION ===================== -->
 <div class="modal-overlay" id="resetConfirmModal" style="display: none;">
     <div class="modal-content" style="max-width: 380px;">
-        <h3>⚠️ Reset PIN</h3>
+        <h3>⚠️ Reset Account</h3>
         <p style="font-size:0.9em; color:#374151;">This will permanently delete:</p>
         <ul style="font-size:0.88em; color:#64748b; margin: 8px 0 14px 18px; line-height:1.7;">
             <li>All conversations</li>
@@ -165,7 +174,7 @@
         <p style="font-size:0.88em; color:#374151;">You will need to set a new PIN and re-upload your credential file.</p>
         <div class="modal-actions" style="justify-content: space-between;">
             <button class="btn-cancel" onclick="cancelReset()">Cancel</button>
-            <button class="btn-danger" onclick="executeReset()">Yes, Reset All</button>
+            <button class="btn-danger" onclick="executeReset()">Yes, Reset Account</button>
         </div>
     </div>
 </div>
@@ -208,7 +217,7 @@
         <div id="saveFavError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
         <div class="modal-actions" style="justify-content:space-between;">
             <button class="btn-cancel" onclick="closeSaveFavModal()">Cancel</button>
-            <button class="btn-save" onclick="confirmSaveFav()">Save</button>
+            <button class="btn-save" onclick="confirmSaveFav()">Save Favourite</button>
         </div>
     </div>
 </div>
@@ -231,7 +240,7 @@
             <div id="adminAuthError" class="test-result test-error" style="display:none; margin-bottom:12px;"></div>
             <div class="modal-actions" style="justify-content:space-between;">
                 <button class="btn-cancel" onclick="closeAdminModal()">Cancel</button>
-                <button class="btn-save" id="adminAuthBtn" onclick="verifyAdminPin()">Access Admin</button>
+                <button class="btn-save" id="adminAuthBtn" onclick="verifyAdminPin()">Verify &amp; Enter</button>
             </div>
         </div>
 
@@ -250,7 +259,7 @@
             <div id="adminSaveResult" class="test-result" style="display:none; margin-bottom:12px;"></div>
             <div class="modal-actions" style="justify-content:space-between;">
                 <button class="btn-cancel" onclick="closeAdminModal()">Close</button>
-                <button class="btn-save" onclick="saveGlobalPrompt()">Save Global Prompt</button>
+                <button class="btn-save" onclick="saveGlobalPrompt()">Save Prompt</button>
             </div>
         </div>
     </div>
@@ -261,11 +270,11 @@
     <div class="modal-content">
         <h3>Agent Configuration (Global)</h3>
 
-        <div class="form-group" style="background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px dashed #cbd5e1; margin-bottom: 15px;">
+        <div class="form-group" style="background: var(--sidebar-bg); padding: 15px; border-radius: 6px; border: 1px dashed var(--border-subtle); margin-bottom: 15px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <label style="color: #0369a1; font-size: 0.95em; margin-bottom:0;">📤 Upload Config File</label>
+                <label style="color: var(--primary-color); font-size: 0.95em; margin-bottom:0;">📤 Upload Config File</label>
                 <a href="/sample-credential.txt" download="sample-credential.txt"
-                   style="font-size:0.78em; color:#0369a1; text-decoration:none; border:1px solid #bae6fd; border-radius:4px; padding:2px 8px; background:#f0f9ff;">
+                   style="font-size:0.78em; color:var(--primary-color); text-decoration:none; border:1px solid var(--border-subtle); border-radius:4px; padding:2px 8px; background:var(--new-chat-btn-hover);">
                     ⬇ Download Sample
                 </a>
             </div>
@@ -321,7 +330,7 @@
         <div class="modal-actions">
             <button type="button" class="btn-test" id="testBtn" onclick="testConnection(true)">Test Connection</button>
             <button type="button" class="btn-cancel" onclick="closeSettings()">Cancel</button>
-            <button type="button" class="btn-save" onclick="saveSettings()">Save Configuration</button>
+            <button type="button" class="btn-save" onclick="saveSettings()">Save Settings</button>
         </div>
 
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
@@ -351,6 +360,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=20"></script>
+<script src="/js/app.js?v=33"></script>
 </body>
 </html>

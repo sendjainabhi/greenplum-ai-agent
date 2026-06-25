@@ -38,6 +38,38 @@ function stripLoneSurrogates(str) {
 }
 
 // =============================================================================
+// THEME  (dark / light — applied immediately to avoid flash)
+// =============================================================================
+
+(function () {
+    var saved = localStorage.getItem('gp_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+})();
+
+function applyThemeLabel() {
+    var btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    btn.textContent = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+}
+
+function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') || 'light';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('gp_theme', next);
+    applyThemeLabel();
+    // Persist to server so theme loads correctly in any browser/incognito session
+    if (CURRENT_USER_ID) {
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, theme: next })
+        }).catch(function() {});
+    }
+}
+
+// =============================================================================
 // USER IDENTITY  (username chosen at PIN setup — survives browser cache clear)
 // =============================================================================
 
@@ -129,7 +161,7 @@ async function confirmSetupPin() {
         errEl.textContent = 'Could not reach the server. Please ensure the server is running.';
         errEl.style.display = 'block'; return;
     } finally {
-        btn.textContent = 'Set PIN & Continue'; btn.disabled = false;
+        btn.textContent = 'Create PIN'; btn.disabled = false;
     }
 
     CURRENT_USER_ID = username;
@@ -213,13 +245,14 @@ async function confirmRecover() {
 
     btn.textContent = '⏳ Verifying...'; btn.disabled = true;
     const hash = await hashPin(pin);
+    let data;   // declared outside try so it's accessible after the block
 
     try {
         const res  = await fetch('/api/auth/verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: username, pinHash: hash })
         });
-        const data = await res.json();
+        data = await res.json();
         if (!data.success) {
             errEl.textContent = data.error || 'Verification failed.';
             errEl.style.display = 'block'; return;
@@ -235,7 +268,7 @@ async function confirmRecover() {
     CURRENT_USER_ID = username;
     localStorage.setItem('gp_user_id', username);
     localStorage.setItem('gp_credential_hash', hash);
-    if (data.pinHint) localStorage.setItem('gp_pin_hint', data.pinHint);
+    if (data && data.pinHint) localStorage.setItem('gp_pin_hint', data.pinHint);
     markSessionUnlocked();
     document.getElementById('recoverModal').style.display = 'none';
     document.getElementById('recoverPin').value = '';
@@ -355,7 +388,7 @@ function openAdminModal() {
     document.getElementById('adminAuthError').style.display = 'none';
     // Reset button — may have been left disabled after a previous successful verify
     const btn = document.getElementById('adminAuthBtn');
-    btn.textContent = 'Access Admin';
+    btn.textContent = 'Verify & Enter';
     btn.disabled    = false;
     setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
 }
@@ -389,7 +422,7 @@ async function verifyAdminPin() {
             errEl.className = 'test-result test-error';
             errEl.textContent = data.error || 'Incorrect admin PIN.';
             errEl.style.display = 'block';
-            btn.textContent = 'Access Admin'; btn.disabled = false;
+            btn.textContent = 'Verify & Enter'; btn.disabled = false;
             return;
         }
 
@@ -404,7 +437,7 @@ async function verifyAdminPin() {
         errEl.className = 'test-result test-error';
         errEl.textContent = 'Could not reach server.';
         errEl.style.display = 'block';
-        btn.textContent = 'Access Admin'; btn.disabled = false;
+        btn.textContent = 'Verify & Enter'; btn.disabled = false;
     }
 }
 
@@ -455,7 +488,7 @@ function renderFavourites() {
     if (favourites.length === 0) {
         const empty = document.createElement('div');
         empty.style.cssText = 'font-size:0.78em; color:#94a3b8; padding:6px 10px;';
-        empty.textContent = 'No saved favourites yet. Click ⭐ Save on any message.';
+        empty.textContent = 'No saved favourites yet. Click ⭐ Favourite on any message.';
         list.appendChild(empty);
         return;
     }
@@ -553,33 +586,51 @@ async function deleteFavourite(id) {
 // APP BOOT
 // =============================================================================
 
-window.onload = async function () {
+// Ask the server whether a user is already registered on its filesystem.
+// Falls back to localStorage if the server is unreachable (offline mode).
+async function fetchAuthStatus() {
     try {
-        if (CURRENT_USER_ID) {
-            if (isSessionUnlocked()) {
-                // Already unlocked — silently re-verify with server to catch stale cache
-                const verified = await silentVerifyWithServer();
-                if (verified === true) {
-                    bootApp();
-                } else if (verified === false) {
-                    // Server rejected — PIN changed or account removed
-                    clearUnlockedState();
-                    showPinEntry();
-                } else {
-                    // null = network error — allow boot in offline mode
-                    bootApp();
-                }
+        const res = await fetch('/api/auth/status');
+        return await res.json();
+    } catch (e) {
+        const cached = localStorage.getItem('gp_user_id');
+        if (cached) return { registered: true, userId: cached };
+        return { registered: false };
+    }
+}
+
+window.onload = async function () {
+    applyThemeLabel();
+    try {
+        // Always check server filesystem first — works in incognito & after cache clear
+        const status = await fetchAuthStatus();
+
+        if (!status.registered) {
+            // No PIN on server yet — show create account (username + PIN, one time only)
+            showPinSetup();
+            return;
+        }
+
+        // User is registered on server — sync identity from server, no username input needed
+        CURRENT_USER_ID = status.userId;
+        localStorage.setItem('gp_user_id', status.userId);
+
+        if (isSessionUnlocked()) {
+            // Already verified earlier in this browser session — silent re-check
+            const verified = await silentVerifyWithServer();
+            if (verified === true) {
+                bootApp();
             } else {
+                clearUnlockedState();
                 showPinEntry();
             }
         } else {
-            // No username known — show Sign In as default
-            showRecoverAccount();
+            // Require PIN (first open, incognito session, or after cache clear)
+            showPinEntry();
         }
     } catch (e) {
-        // Safety net — never leave the user on a blank page
         console.error('[boot] Unexpected error:', e);
-        showRecoverAccount();
+        showPinEntry();
     }
 };
 
@@ -595,16 +646,101 @@ function configureMarked() {
     }
 }
 
-function bootApp() {
+// Pull settings from server filesystem and populate localStorage.
+// Called on every boot so incognito / new-browser sessions always have
+// the correct config without the user needing to re-upload credentials.
+async function loadSettingsFromServer() {
+    if (!CURRENT_USER_ID) return;
+    try {
+        const res  = await fetch('/api/settings/load?userId=' + encodeURIComponent(CURRENT_USER_ID));
+        const data = await res.json();
+        if (data.success && data.config) {
+            localStorage.setItem('gp_config', JSON.stringify({ data: data.config }));
+            // Apply theme from server so it's consistent across all browsers/sessions
+            if (data.config.theme) {
+                localStorage.setItem('gp_theme', data.config.theme);
+                document.documentElement.setAttribute('data-theme', data.config.theme);
+                applyThemeLabel();
+            }
+        }
+    } catch (e) {
+        // Server unreachable — fall back to whatever is already in localStorage
+    }
+}
+
+// Load all session data from server filesystem — called on every boot.
+async function loadSessionsFromServer() {
+    if (!CURRENT_USER_ID) return;
+    try {
+        const res  = await fetch('/api/sessions/load?userId=' + encodeURIComponent(CURRENT_USER_ID));
+        const data = await res.json();
+        if (!data.success) return;
+
+        if (Array.isArray(data.sessions) && data.sessions.length > 0) {
+            chatSessions = data.sessions;
+            localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
+        }
+        if (data.currentSessionId) {
+            currentSessionId = data.currentSessionId;
+            localStorage.setItem('gp_current_session', data.currentSessionId);
+        }
+        if (Array.isArray(data.history) && data.history.length > 0) {
+            localStorage.setItem('gp_history', JSON.stringify(data.history));
+        }
+        if (data.chatData && typeof data.chatData === 'object') {
+            Object.entries(data.chatData).forEach(([sid, msgs]) => {
+                if (Array.isArray(msgs)) {
+                    localStorage.setItem('gp_chat_ui_' + sid, JSON.stringify(msgs));
+                }
+            });
+        }
+    } catch (e) {
+        // Server unreachable — local state already in memory from module init
+    }
+}
+
+// Debounced save — coalesces rapid changes into one server write.
+let _sessionSaveTimer = null;
+function scheduleSessionSave() {
+    if (_sessionSaveTimer) clearTimeout(_sessionSaveTimer);
+    _sessionSaveTimer = setTimeout(saveSessionsToServer, 3000);
+}
+
+async function saveSessionsToServer() {
+    if (!CURRENT_USER_ID) return;
+    try {
+        const chatData = {};
+        chatSessions.forEach(s => {
+            const msgs = safeParse('gp_chat_ui_' + s.id, []);
+            if (msgs.length > 0) chatData[s.id] = msgs;
+        });
+        await fetch('/api/sessions/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: CURRENT_USER_ID,
+                sessions: chatSessions,
+                currentSessionId,
+                history: Array.from(suggestionHistory),
+                chatData
+            })
+        });
+    } catch (e) { /* localStorage still holds current state */ }
+}
+
+async function bootApp() {
     try { configureMarked(); } catch (err) { console.warn('[boot] configureMarked failed:', err); }
+    setupTextarea();
+    await loadSettingsFromServer();    // settings + theme from server file
+    await loadSessionsFromServer();    // sessions, messages, history from server file
+    // Build suggestion history AFTER server load so gp_history is populated
     const savedHistory = safeParse('gp_history', []);
     suggestionHistory = new Set([
         "Check bloat in the 'sales' table",
         "Show cluster status",
         ...Array.isArray(savedHistory) ? savedHistory : []
     ]);
-    setupTextarea();
-    initSessions();
+    initSessions();    // uses globals freshly populated from server
     loadFavourites();
     autoConnect();
 }
@@ -627,7 +763,7 @@ function initSessions() {
 }
 
 async function createNewChat(render = true) {
-    if (chatSessions.length >= 4) {
+    if (chatSessions.length >= 10) {
         const oldest = chatSessions.pop();
         localStorage.removeItem('gp_chat_ui_' + oldest.id);
         if (activeRequests[oldest.id]) {
@@ -648,6 +784,7 @@ async function createNewChat(render = true) {
 
     if (render) { loadSession(newId); renderSidebar(); }
     else { currentSessionId = newId; localStorage.setItem('gp_current_session', newId); renderSidebar(); }
+    scheduleSessionSave();
 }
 
 function loadSession(sessionId) {
@@ -697,6 +834,7 @@ function renderSidebar() {
                 session.title = newTitle.trim();
                 localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
                 renderSidebar();
+                scheduleSessionSave();
             }
         };
 
@@ -733,6 +871,7 @@ async function deleteSession(sessionId) {
             body: JSON.stringify({ userId: CURRENT_USER_ID, sessionId })
         });
     } catch (e) {}
+    scheduleSessionSave();
     if (sessionId === currentSessionId) {
         if (chatSessions.length > 0) loadSession(chatSessions[0].id);
         else createNewChat(true);
@@ -747,6 +886,7 @@ function updateSessionTitle(firstPrompt, targetSessionId) {
         session.title = firstPrompt.length > 25 ? firstPrompt.substring(0, 25) + '...' : firstPrompt;
         localStorage.setItem('gp_sessions', JSON.stringify(chatSessions));
         renderSidebar();
+        scheduleSessionSave();
     }
 }
 
@@ -837,6 +977,7 @@ async function sendPrompt() {
 
         suggestionHistory.add(prompt);
         localStorage.setItem('gp_history', JSON.stringify(Array.from(suggestionHistory)));
+        scheduleSessionSave();
 
     } catch (error) {
         console.error('[sendPrompt] error:', error);
@@ -884,6 +1025,7 @@ function saveMessageToStorage(targetSessionId, text, className, isMarkdown) {
         }
     }
     if (targetSessionId === currentSessionId) currentChatUiHistory = history;
+    scheduleSessionSave();
 }
 
 function addMessageToDOM(text, className, isMarkdown) {
@@ -950,7 +1092,7 @@ function addMessageToDOM(text, className, isMarkdown) {
 
     if (className === 'user-message') {
         const favBtn = document.createElement('button');
-        favBtn.innerHTML = '⭐ Save';
+        favBtn.innerHTML = '⭐ Favourite';
         favBtn.title     = 'Save as favourite';
         favBtn.style.cssText = 'margin-top:4px; background:transparent; border:1px solid #fbbf24; color:#b45309; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75em; align-self:flex-end; opacity:0.7; transition:opacity 0.2s;';
         favBtn.onmouseover = () => favBtn.style.opacity = '1';
@@ -962,8 +1104,12 @@ function addMessageToDOM(text, className, isMarkdown) {
 
     if (className === 'ai-message' && !text.includes('⚠️ Request cancelled') && !text.includes('Error connecting')) {
         const downloadBtn    = document.createElement('button');
-        downloadBtn.innerHTML = '⬇️ Download Response PDF';
-        downloadBtn.style.cssText = 'margin-top:5px; background:transparent; border:1px solid #cbd5e1; color:#475569; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8em; align-self:flex-start; transition:background 0.2s;';
+        downloadBtn.innerHTML = '⬇ Export PDF';
+        downloadBtn.style.cssText = 'margin-top:6px; background:var(--new-chat-btn-bg); border:1px solid var(--border-subtle); color:var(--muted-text); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8em; align-self:flex-start; transition:all 0.12s ease; box-shadow:0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06); transform:translateY(0);';
+        downloadBtn.onmouseenter = () => { downloadBtn.style.transform='translateY(1px)'; downloadBtn.style.boxShadow='0 1px 0 rgba(0,0,0,0.1)'; };
+        downloadBtn.onmouseleave = () => { downloadBtn.style.transform='translateY(0)'; downloadBtn.style.boxShadow='0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06)'; };
+        downloadBtn.onmousedown  = () => { downloadBtn.style.transform='translateY(2px)'; downloadBtn.style.boxShadow='inset 0 1px 3px rgba(0,0,0,0.15)'; };
+        downloadBtn.onmouseup    = () => { downloadBtn.style.transform='translateY(0)'; downloadBtn.style.boxShadow='0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06)'; };
         downloadBtn.onclick   = () => exportSinglePDF(uniqueId, downloadBtn);
         wrapperDiv.appendChild(downloadBtn);
     }
@@ -988,102 +1134,119 @@ function exportSinglePDF(wrapperId, btnElement) {
     btnElement.innerHTML = '⏳ Generating...';
     btnElement.disabled  = true;
 
+    const restoreTheme = (theme) => {
+        if (theme) document.documentElement.setAttribute('data-theme', theme);
+        else document.documentElement.removeAttribute('data-theme');
+    };
+
     try {
-        const aiWrapper   = document.getElementById(wrapperId);
-        const userWrapper = aiWrapper.previousElementSibling;
-        const queryText   = (userWrapper && userWrapper.classList.contains('wrapper-user'))
-            ? userWrapper.querySelector('.message').innerText.trim() : 'Data Query';
+        const aiWrapper = document.getElementById(wrapperId);
+        if (!aiWrapper) throw new Error('AI wrapper not found');
 
-        // Clone the AI message — keep the original DOM untouched
+        // Walk backwards to find the nearest preceding user message
+        let userWrapper = aiWrapper.previousElementSibling;
+        while (userWrapper && !userWrapper.classList.contains('wrapper-user')) {
+            userWrapper = userWrapper.previousElementSibling;
+        }
+        const queryText = (userWrapper && userWrapper.querySelector('.message'))
+            ? (userWrapper.querySelector('.message').innerText.trim() || 'Data Query')
+            : 'Data Query';
+
+        // Clone the AI message div — leave the live DOM untouched
         const aiNode = aiWrapper.querySelector('.message').cloneNode(true);
-        aiNode.querySelectorAll('.copy-btn').forEach(btn => btn.remove());
+        aiNode.querySelectorAll('.copy-btn, button').forEach(el => el.remove());
 
-        // Replace canvas elements in the CLONE using pixel data from the live originals
-        // (cloneNode copies the element but not the painted pixels)
+        // Replace canvas elements with PNG snapshots of the live versions
         const liveCanvases   = aiWrapper.querySelectorAll('canvas');
         const clonedCanvases = aiNode.querySelectorAll('canvas');
-        liveCanvases.forEach((liveCanvas, i) => {
+        liveCanvases.forEach((live, i) => {
             try {
                 const cloned = clonedCanvases[i];
                 if (!cloned) return;
-                const img        = document.createElement('img');
-                img.src          = liveCanvas.toDataURL('image/png');
+                const img = document.createElement('img');
+                img.src = live.toDataURL('image/png');
                 img.style.cssText = 'max-width:100%; height:auto; display:block; margin:8px 0;';
                 cloned.parentNode.replaceChild(img, cloned);
             } catch (_) {}
         });
 
-        // Filename: first 40 chars of query, special-chars stripped, + date
-        const safeName  = queryText.replace(/[^a-zA-Z0-9\s]/g, '').trim()
-                                    .substring(0, 40).trim().replace(/\s+/g, '-') || 'report';
-        const dateStr   = new Date().toISOString().slice(0, 10);
-        const filename  = `greenplum-${safeName}-${dateStr}.pdf`;
-        const nowStr    = new Date().toLocaleString();
+        // Build filename
+        const safeName = queryText.replace(/[^a-zA-Z0-9\s]/g, '').trim()
+                                   .substring(0, 40).trim().replace(/\s+/g, '-') || 'report';
+        const dateStr  = new Date().toISOString().slice(0, 10);
+        const filename = `greenplum-${safeName}-${dateStr}.pdf`;
+        const nowStr   = new Date().toLocaleString();
 
-        const htmlContent = `
-<div style="font-family:Arial,sans-serif; font-size:13px; color:#1e293b; padding:10px;">
+        // Build the PDF HTML — all colors are hard-coded (no CSS variables)
+        const pdfHtml = `
+<div style="font-family:Arial,sans-serif;font-size:13px;color:#1a2e1f;padding:12px 16px;background:#ffffff;width:100%;">
 
-  <!-- Report header -->
-  <div style="border-bottom:2px solid #0ea5e9; padding-bottom:12px; margin-bottom:18px;">
-    <div style="font-size:18px; font-weight:bold; color:#0369a1;">Greenplum AI Analytics Report</div>
-    <div style="font-size:11px; color:#64748b; margin-top:4px;">Generated: ${nowStr}</div>
+  <div style="border-bottom:2px solid #2d6a4f;padding-bottom:12px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="30" height="30">
+      <circle cx="50" cy="50" r="47" fill="none" stroke="#78be20" stroke-width="9"/>
+      <circle cx="50" cy="50" r="35" fill="#78be20"/>
+      <path d="M 46 16 C 26 16 14 32 14 50 C 14 68 27 83 46 83 C 58 83 67 76 69 65 L 50 50 Z" fill="white"/>
+    </svg>
+    <div>
+      <div style="font-size:19px;font-weight:bold;color:#2d6a4f;line-height:1.2;">Greenplum AI Analytics Report</div>
+      <div style="font-size:11px;color:#4b7a5e;margin-top:3px;">Generated: ${nowStr}</div>
+    </div>
   </div>
 
-  <!-- Query callout -->
-  <div style="background:#f1f5f9; border-left:4px solid #0ea5e9; padding:10px 14px; margin-bottom:18px; border-radius:0 4px 4px 0;">
-    <div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Query</div>
-    <div style="font-size:13px; color:#1e293b;">${queryText}</div>
+  <div style="background:#f0fdf4;border-left:4px solid #2d6a4f;padding:10px 14px;margin-bottom:20px;border-radius:0 4px 4px 0;">
+    <div style="font-size:10px;font-weight:700;color:#4b7a5e;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px;">Query</div>
+    <div style="font-size:13px;color:#1a2e1f;line-height:1.5;">${queryText}</div>
   </div>
 
-  <!-- Print-friendly overrides: light code blocks, clean tables -->
   <style>
-    pre  { background:#f8fafc !important; border:1px solid #e2e8f0 !important; border-radius:4px; padding:12px !important; white-space:pre-wrap; word-break:break-all; }
-    code { color:#0f172a !important; background:#f8fafc !important; font-family:monospace; font-size:12px; }
-    .hljs { background:#f8fafc !important; color:#0f172a !important; }
-    table { border-collapse:collapse; width:100%; margin:12px 0; font-size:12px; }
-    th    { background:#0ea5e9 !important; color:#ffffff !important; padding:8px 10px; text-align:left; }
-    td    { padding:7px 10px; border:1px solid #e2e8f0; color:#1e293b; }
-    tr:nth-child(even) td { background:#f8fafc; }
-    h1,h2,h3 { color:#0369a1; margin-top:16px; }
-    img  { max-width:100%; height:auto; }
-    .table-responsive { overflow:visible; }
+    *{box-sizing:border-box;}
+    p,li,span,strong,em{color:#1a2e1f!important;}
+    a{color:#2d6a4f!important;}
+    h1,h2,h3,h4,h5,h6{color:#2d6a4f!important;margin:14px 0 6px;}
+    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;}
+    code{color:#0f4c2a!important;background:#f5f9f6!important;font-family:monospace!important;font-size:12px!important;}
+    table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;}
+    th{background:#2d6a4f!important;color:#ffffff!important;padding:9px 11px!important;text-align:left!important;}
+    td{padding:7px 11px!important;border:1px solid #bbf7d0!important;color:#1a2e1f!important;background:#ffffff!important;}
+    tr:nth-child(even) td{background:#f0fdf4!important;}
+    .table-responsive{overflow:visible!important;}
+    .copy-btn,button{display:none!important;}
+    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;}
+    img{max-width:100%!important;height:auto!important;}
   </style>
 
-  <!-- AI response body -->
-  <div style="line-height:1.7;">
+  <div style="line-height:1.75;color:#1a2e1f;">
     ${aiNode.innerHTML}
   </div>
 
-  <!-- Footer -->
-  <div style="border-top:1px solid #e2e8f0; margin-top:24px; padding-top:8px; font-size:10px; color:#94a3b8; text-align:center;">
+  <div style="border-top:1px solid #bbf7d0;margin-top:28px;padding-top:8px;font-size:10px;color:#4b7a5e;text-align:center;">
     Greenplum AI Analytics Agent &mdash; Confidential
   </div>
-
 </div>`;
 
         const options = {
-            margin:      [8, 8, 8, 8],
+            margin:      [6, 6, 6, 6],
             filename:    filename,
             image:       { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' },
             jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' }
         };
 
-        html2pdf().set(options).from(htmlContent).save()
+        // Temporarily switch to light mode so CSS variables resolve correctly in the render
+        const savedTheme = document.documentElement.getAttribute('data-theme');
+        document.documentElement.removeAttribute('data-theme');
+
+        html2pdf().set(options).from(pdfHtml).save()
             .then(() => {
+                restoreTheme(savedTheme);
                 btnElement.innerHTML = '✅ Downloaded!';
-                setTimeout(() => {
-                    btnElement.innerHTML = originalText;
-                    btnElement.disabled  = false;
-                }, 2000);
+                setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
             })
             .catch(err => {
+                restoreTheme(savedTheme);
                 console.error('[PDF] Generation failed:', err);
                 btnElement.innerHTML = '❌ Failed — try again';
-                setTimeout(() => {
-                    btnElement.innerHTML = originalText;
-                    btnElement.disabled  = false;
-                }, 2500);
+                setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2500);
             });
 
     } catch (err) {

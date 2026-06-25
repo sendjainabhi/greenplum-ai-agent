@@ -1,19 +1,37 @@
-# Maven build directory
+# Maven build output
 target/
 
-# IDE files
+# Compiled JARs — built by start.sh, never committed
+greenplum-ai-agent-*.jar
+
+# IDE and OS files
 .idea/
 *.iml
 .classpath
 .project
 .settings/
-*memory.json
+.DS_Store
+*.swp
+*.swo
+
+# Runtime files
+agent.pid
+*.pid
 
 # Log files
 *.log
-.DS_Store
+stdout.log
 
-# Sensitive credential and config files — never commit these
+# User data directory — contains PIN hashes, API keys, session JSON, chat history
+# NEVER commit this directory
+users/
+
+# Admin configuration
+global-prompt.txt
+
+# Sensitive credential and config files
 agent-config.properties
 agent-credential.txt
-stdout.log
+
+# Memory / cache
+*memory.json
