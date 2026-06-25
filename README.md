@@ -7,23 +7,7 @@ An intelligent, read-only AI assistant for Greenplum database clusters. It conne
 
 ---
 
-## Table of Contents
-
-1. [Screenshots](#screenshots)
-2. [Prerequisites](#prerequisites)
-3. [Quick Start](#quick-start)
-4. [First-Time Setup](#first-time-setup)
-5. [Features](#features)
-6. [Configuration Reference](#configuration-reference)
-7. [Button Reference](#button-reference)
-8. [Data Management](#data-management)
-9. [Cloud Foundry Deployment](#cloud-foundry-deployment)
-10. [Architecture](#architecture)
-11. [Troubleshooting](#troubleshooting)
-
----
-
-## Screenshots
+## Gallery
 
 | Chat Interface | MCP Tool Execution |
 | :---: | :---: |
@@ -31,6 +15,100 @@ An intelligent, read-only AI assistant for Greenplum database clusters. It conne
 | **Cluster Performance** | **Query Results** |
 | ![Performance](img/img3.jpeg) | ![Results](img/img4.jpeg) |
 | ![Connectivity](img/img5.jpeg) | |
+
+---
+
+## Features
+
+### 🎨 Mint & Forest Theme
+
+- **Colour palette** — forest green (`#2d6a4f`) primary; pale mint backgrounds; white surfaces
+- **Dark mode** — enabled by default; deep forest greens (`#071510` body, `#0e2318` surfaces)
+- **Light mode** — soft mint wash (`#f0fdf4`) body with white surfaces and mint-tinted borders
+- **Theme toggle** — `🌙 Dark Mode` / `☀️ Light Mode` button in the header; switches instantly; preference saved to server and restored on any device
+- **Greenplum logo** — SVG logo mark in the header bar; renders correctly in both dark and light mode
+- **3D buttons** — all buttons use layered `box-shadow` with a press-down animation on click
+- **Sidebar depth** — forest-green separator shadow on the left panel; active session gets a green left accent bar
+
+### 🔒 Authentication & Security
+
+- **PIN-based accounts** — username + PIN (min 4 chars) with an optional hint; plain PIN never stored on disk
+- **SHA-256 hashing** — only the PIN hash is written to `users/{id}/config.json`
+- **Server-side auth** — every login is verified server-side; browser cache is never the authority
+- **Same browser** — subsequent visits require PIN only; username already remembered
+- **New browser / incognito** — always prompts for username + PIN; server verifies against the stored account
+- **Forgot PIN** — shows hint and the option to reset the account (deletes all data, forces fresh setup)
+- **Change PIN** — available in ⚙️ Settings; old PIN verified before new one is accepted
+- **Admin PIN** — separate PIN (`ADMIN_PIN` env var) guards the global Admin Panel
+
+### 💬 Chat & Sessions
+
+- **Up to 10 concurrent sessions** — independent chat tabs, each with its own AI memory and title (limit was previously 4)
+- **Full session persistence** — sessions, titles, messages, and timestamps saved to the server; restored on any browser after sign-in
+- **AI memory per session** — separate LangChain4j memory chain per tab; 30-message window; 90-day retention
+- **Auto-title** — first message of each session becomes the tab title automatically
+- **Session rename** — click ✏️ on any sidebar tab to rename inline
+- **Session delete** — click 🗑️ to remove a session and its AI memory from the server
+- **Cancel in-flight** — a **Cancel** button replaces Send while a request is running; aborts immediately
+- **Prompt autocomplete** — debounced suggestions from your prompt history appear as you type
+
+### 📊 Rich Response Formatting
+
+- **Markdown** — full CommonMark via `marked.js`; headings, lists, bold, italic, blockquotes
+- **Syntax-highlighted code** — `highlight.js` code blocks with a dark theme
+- **Copy button** — every code block has a `📋 Copy` button; confirms with `✅ Copied!` for 2 seconds
+- **Tables** — horizontal scroll; forest-green headers; alternating mint-tinted rows
+- **Inline charts** — Chart.js bar, line, and pie charts rendered from `chart` code blocks
+- **Thinking block strip** — `<think>…</think>` from Qwen3 / DeepSeek-R1 removed before display
+- **Token streaming** — tokens stream in real-time; spinner shows while in-flight
+
+### 📄 PDF Export
+
+- **One-click export** — `⬇ Export PDF` button below every AI response
+- **Greenplum branding** — SVG logo, forest-green header, query callout box
+- **Dark-mode safe** — `data-theme` removed before render so text is always visible on white paper
+- **Charts included** — canvas charts converted to PNG snapshots before PDF render
+- **Auto filename** — `greenplum-{query-slug}-{YYYY-MM-DD}.pdf`
+
+### ⭐ Saved Favourites
+
+- **Save any prompt** — click `⭐ Favourite` below any message you sent; give it a label
+- **Sidebar access** — **⭐ Saved Favourites** panel in the left sidebar; click to fill the input
+- **Server persistence** — stored in `users/{id}/favourites.json`; survives chat clears and browser changes
+- **Individual delete** — 🗑️ next to each favourite removes it without affecting others
+
+### 🔐 Admin Panel
+
+- **Global pre-training prompt** — silently prepended to every user's chat request; takes effect immediately on save
+- **PIN-protected** — requires the separate admin PIN to open
+- **All-user scope** — individual user system prompts are appended after the global prompt
+- **Disable** — leave the global prompt blank and save to turn it off
+
+### 🔌 Multi-Provider LLM Support
+
+- **Ollama** — local inference via `http://localhost:11434`; no API key required
+- **OpenAI-compatible** — works with ChatGPT, vLLM, LMStudio, and any OpenAI-spec endpoint
+- **Anthropic** — Claude Sonnet, Claude Opus, and other Claude models via the Anthropic API
+- **Hot-swap** — switch provider, model, and endpoint from ⚙️ Settings without restarting the server
+
+### 🛡️ MCP Capabilities & Guardrails
+
+- **`checkTableBloat`** — identifies tables with excessive dead tuples; recommends `VACUUM`
+- **`getClusterStatus`** — checks segment status, mirroring health, and replication state
+- **`executeQuery`** — executes safe `SELECT` queries; hard-blocked from `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`
+- **Schema verification** — always introspects `information_schema.columns` before querying a table
+- **Thinking block strip** — removes internal reasoning blocks from Qwen3 / DeepSeek-R1
+
+### 💡 Example Prompts
+
+| Prompt | MCP Tool |
+| :--- | :--- |
+| "Check bloat in the 'sales' table" | `checkTableBloat` |
+| "Show cluster status" | `getClusterStatus` |
+| "List all tables in the finance schema" | `executeQuery` |
+| "What indexes exist on the orders table?" | `executeQuery` |
+| "Show me the top 10 largest tables by size" | `executeQuery` |
+| "Are there any down segments in the cluster?" | `getClusterStatus` |
 
 ---
 
@@ -90,224 +168,24 @@ http://localhost:8080
 
 ### Step 1 — Create an account
 
-| Step | Action |
-| :--- | :--- |
-| 1 | Open `http://localhost:8080` — the Sign In screen appears |
-| 2 | Click **"Don't have an account? Create one"** |
-| 3 | Enter a username — letters, numbers, `-` and `_` only (no `@`, `.`, or spaces) |
-| 4 | Set a PIN (min 4 characters) and an optional hint |
-| 5 | Click **Create PIN** — account is created and the app loads |
+1. Open `http://localhost:8080` — the Sign In screen appears
+2. Click **"Don't have an account? Create one"**
+3. Enter a username — letters, numbers, `-` and `_` only (no `@`, `.`, or spaces)
+4. Set a PIN (min 4 characters) and an optional hint
+5. Click **Create PIN** — account is created and the app loads
 
 > **Returning to the same browser:** The app remembers your username — you only need your PIN.
 > **New browser or incognito:** Enter username and PIN — the server verifies against your stored account.
 
 ### Step 2 — Configure AI provider
 
-| Step | Action |
-| :--- | :--- |
-| 1 | Click **⚙️ Settings** in the header |
-| 2 | Upload a `.properties` file or fill in the fields manually |
-| 3 | Set: LLM Provider, Endpoint URL, API Key, Model Name, MCP Server URL |
-| 4 | Click **Test Connection** to verify everything is reachable |
-| 5 | Click **Save Settings** — configuration is saved to the server |
+1. Click **⚙️ Settings** in the header
+2. Upload a `.properties` file or fill in the fields manually
+3. Set: LLM Provider, Endpoint URL, API Key, Model Name, MCP Server URL
+4. Click **Test Connection** to verify everything is reachable
+5. Click **Save Settings** — configuration is saved to the server
 
 Settings persist across browsers, incognito windows, and restarts.
-
----
-
-## Features
-
-### All Features at a Glance
-
-| # | Category | Feature | Description | Default / Limit |
-| :---: | :--- | :--- | :--- | :--- |
-| 1 | UI | Mint & Forest colour palette | Forest green primary (`#2d6a4f`), pale mint backgrounds, white surfaces | Always on |
-| 2 | UI | Dark mode | Deep forest green theme (`#071510` body, `#0e2318` surfaces) | **Default** |
-| 3 | UI | Light mode | Soft mint wash (`#f0fdf4`) body with white surfaces | Toggle in header |
-| 4 | UI | Theme persistence | Theme choice saved to server; restored on any device or browser | Per-user |
-| 5 | UI | Greenplum logo | SVG logo mark in the header bar; works in both dark and light mode | Always on |
-| 6 | UI | 3D buttons | Layered `box-shadow` + `transform: translateY()` press animation on all buttons | Always on |
-| 7 | UI | Sidebar depth | Forest-green separator; active session gets a green left accent bar | Always on |
-| 8 | Auth | PIN authentication | Username + PIN account; PIN never stored in plain text | Required |
-| 9 | Auth | SHA-256 hashing | PIN hashed before write; plain PIN never touches disk | Always on |
-| 10 | Auth | Server-side verification | Every login checked server-side; browser cache is not the authority | Always on |
-| 11 | Auth | PIN hint | Optional hint shown on the Forgot PIN screen | Optional |
-| 12 | Auth | Change PIN | Change from ⚙️ Settings; old PIN verified before new one accepted | Available |
-| 13 | Auth | Reset account | Deletes all user data; forces fresh account setup | Available |
-| 14 | Auth | Admin PIN | Separate PIN (`ADMIN_PIN` env var) guards the global Admin Panel | Required for admin |
-| 15 | Chat | Max concurrent sessions | Up to **10** independent chat tabs, each with its own AI memory | 10 (was 4) |
-| 16 | Chat | Session persistence | Sessions, titles, messages, timestamps saved server-side | Always on |
-| 17 | Chat | Cross-device restore | All sessions load from server after sign-in on any browser | Always on |
-| 18 | Chat | AI memory per session | Separate LangChain4j memory chain per tab; 30-message window | 90-day retention |
-| 19 | Chat | Auto-title | First message of each session becomes the tab title | Always on |
-| 20 | Chat | Session rename | Click ✏️ to rename any tab inline | Available |
-| 21 | Chat | Session delete | Click 🗑️ to remove a session and its AI memory | Available |
-| 22 | Chat | Cancel request | Cancel button aborts an in-flight request immediately | Available |
-| 23 | Chat | Prompt autocomplete | Debounced suggestions from your prompt history appear as you type | Always on |
-| 24 | Formatting | Markdown rendering | Full CommonMark — headings, lists, bold, italic, blockquotes | Always on |
-| 25 | Formatting | Syntax-highlighted code | `highlight.js` code blocks with dark theme | Always on |
-| 26 | Formatting | Copy button | `📋 Copy` on every code block; confirms with `✅ Copied!` | Always on |
-| 27 | Formatting | Inline charts | Chart.js bar/line/pie rendered from `chart` code blocks | Always on |
-| 28 | Formatting | Thinking block strip | `<think>…</think>` from Qwen3 / DeepSeek-R1 removed before display | Always on |
-| 29 | Formatting | Token streaming | Tokens stream in real-time; spinner shows while in-flight | Always on |
-| 30 | PDF | Export PDF | `⬇ Export PDF` per AI response; branded with Greenplum logo | Available |
-| 31 | PDF | Dark-mode safe export | `data-theme` removed before render; text always visible on white paper | Always on |
-| 32 | PDF | Filename | `greenplum-{query-slug}-{YYYY-MM-DD}.pdf` | Auto-generated |
-| 33 | Favourites | Save prompt | `⭐ Favourite` below any message you sent | Available |
-| 34 | Favourites | Labelled favourites | Give each favourite a short name for easy reuse | Optional |
-| 35 | Favourites | Server persistence | Saved to `users/{id}/favourites.json`; survives chat clears | Always on |
-| 36 | Admin | Global pre-training prompt | Prepended to all users' chat requests; takes effect immediately on save | Optional |
-| 37 | Admin | PIN-protected access | Admin Panel requires separate admin PIN to open | Always on |
-| 38 | LLM | Ollama (local) | Local inference; no API key required | Configurable |
-| 39 | LLM | OpenAI-compatible | Works with ChatGPT, vLLM, LMStudio | Configurable |
-| 40 | LLM | Anthropic | Claude Sonnet / Opus via Anthropic API | Configurable |
-| 41 | MCP | Table bloat analysis | `checkTableBloat` — finds tables needing `VACUUM` | MCP tool |
-| 42 | MCP | Cluster health check | `getClusterStatus` — segments, mirroring, replication | MCP tool |
-| 43 | MCP | Read-only SQL | `executeQuery` — `SELECT` only; DML/DDL hard-blocked | MCP tool |
-| 44 | Security | Schema verification | Always introspects `information_schema` before querying a table | Always on |
-| 45 | Security | Credential safety | `users/` excluded from git; API keys stripped from settings GET response | Always on |
-
----
-
-### UI & Theme
-
-| Feature | Detail |
-| :--- | :--- |
-| **Colour palette** | Mint & Forest — forest green (`#2d6a4f`) primary; pale mint backgrounds; white surfaces |
-| **Dark mode (default)** | Enabled on first load; deep forest greens (`#071510` body, `#0e2318` surface) |
-| **Light mode** | Soft mint wash (`#f0fdf4`) body with white surfaces and mint-tinted borders |
-| **Theme toggle** | `🌙 Dark Mode` / `☀️ Light Mode` button in the header; switches instantly |
-| **Theme persistence** | Saved server-side in `users/{id}/config.json` — restored on any device |
-| **Greenplum logo** | SVG logo mark in the header bar; renders correctly in dark and light mode |
-| **3D buttons** | All buttons use layered `box-shadow` with a press-down `transform: translateY()` on click |
-| **Sidebar depth** | Forest-green separator shadow on the left panel; active session gets a green left accent bar |
-
----
-
-### Authentication & Security
-
-| Feature | Detail |
-| :--- | :--- |
-| **Account creation** | Username + PIN (min 4 chars) + optional hint; PIN never stored in plain text |
-| **PIN hashing** | SHA-256 hash stored in `users/{id}/config.json`; plain PIN never written to disk |
-| **Server-side auth** | Every login verified against the server — browser cache is never the authority |
-| **New browser / incognito** | Always shows Sign In; server checks for a registered account |
-| **Same browser** | Subsequent visits require PIN only — username already stored in localStorage |
-| **PIN hint** | Optional hint set at creation; shown on the Forgot PIN screen |
-| **Change PIN** | Available in ⚙️ Settings; old PIN verified server-side before new one is accepted |
-| **Forgot PIN flow** | Shows hint → option to **Reset Account** (deletes all data, forces fresh setup) |
-| **Admin PIN** | Separate server-configured PIN (`ADMIN_PIN` env var) guards the Admin Panel |
-| **Credential safety** | `users/` is `.gitignore`d; API keys are stripped from settings GET responses |
-
----
-
-### Chat & Sessions
-
-| Feature | Detail |
-| :--- | :--- |
-| **Max concurrent sessions** | **10 tabs** — oldest tab is dropped when the limit is reached |
-| **Session persistence** | Sessions, titles, messages, and timestamps saved to `users/{id}/sessions.json` |
-| **Cross-device restore** | Sign in from any browser — all sessions load from the server |
-| **AI memory per session** | Separate LangChain4j memory chain per tab; 30-message window; 90-day retention |
-| **Auto-title** | First message of each session becomes the tab title automatically |
-| **Session rename** | Click ✏️ on any sidebar tab to rename inline |
-| **Session delete** | Click 🗑️ on any tab; removes the session and its AI memory from the server |
-| **Cancel in-flight** | A **Cancel** button replaces Send while a request is running; aborts immediately |
-| **Save debounce** | Session state is saved to the server 3 seconds after any change |
-| **Autocomplete** | Debounced suggestions from your prompt history appear as you type |
-
----
-
-### Response Formatting
-
-| Feature | Detail |
-| :--- | :--- |
-| **Markdown** | Full CommonMark via `marked.js` — headings, lists, bold, italic, blockquotes |
-| **Code blocks** | Syntax highlighted via `highlight.js`; monospace; dark-themed code area |
-| **Copy button** | Every code block has a `📋 Copy` button; confirms with `✅ Copied!` for 2 seconds |
-| **Tables** | Horizontal scroll; forest-green headers; alternating mint-tinted rows |
-| **Inline charts** | Chart.js renders bar/line/pie charts when the AI returns a `chart` code block |
-| **Thinking block strip** | `<think>…</think>` content from Qwen3 / DeepSeek-R1 removed before display |
-| **Streaming** | Tokens stream in real-time; a spinner shows while the request is in-flight |
-
----
-
-### PDF Export
-
-| Feature | Detail |
-| :--- | :--- |
-| **Trigger** | `⬇ Export PDF` button below every AI response |
-| **Header** | Greenplum SVG logo, forest-green branding, query callout box |
-| **Tables** | Forest-green `th` headers; alternating mint row tints; full borders |
-| **Code blocks** | Light background (`#f5f9f6`) with dark text — readable on white paper |
-| **Charts** | Canvas charts converted to PNG snapshots before PDF render |
-| **Dark-mode safe** | `data-theme` removed before render so CSS variables resolve to light values |
-| **Filename** | `greenplum-{query-slug}-{YYYY-MM-DD}.pdf` |
-
----
-
-### Saved Favourites
-
-| Feature | Detail |
-| :--- | :--- |
-| **Save a prompt** | Click `⭐ Favourite` below any message you sent |
-| **Label it** | Give the favourite a short name (e.g. "Weekly Revenue Report") |
-| **Access** | **⭐ Saved Favourites** panel in the left sidebar |
-| **Reuse** | Click any favourite to fill the input; edit before sending if needed |
-| **Delete** | 🗑️ next to each favourite removes it individually |
-| **Persistence** | Stored server-side in `users/{id}/favourites.json`; survives chat clears and browser changes |
-
----
-
-### Admin Panel
-
-| Feature | Detail |
-| :--- | :--- |
-| **Access** | Click `🔐 Admin Panel` in the header; enter the admin PIN to unlock |
-| **Admin PIN** | Set via `ADMIN_PIN` environment variable at startup |
-| **Global prompt** | Free-text prompt silently prepended to every user's chat request |
-| **Scope** | Applies to **all users** — individual user system prompts appended after |
-| **Effect** | Immediate — takes effect on the very next chat request after saving |
-| **Disable** | Leave the global prompt blank and save |
-
----
-
-### LLM Provider Support
-
-| Provider | Example Endpoint | Example Models | Notes |
-| :--- | :--- | :--- | :--- |
-| **Ollama** | `http://localhost:11434` | `qwen3:30b`, `llama3`, `mistral` | Local inference; no API key required |
-| **OpenAI Compatible** | Any OpenAI-spec URL | `gpt-4o`, `gpt-4-turbo`, vLLM | Works with ChatGPT, vLLM, LMStudio |
-| **Anthropic** | `https://api.anthropic.com` | `claude-sonnet-4-6`, `claude-opus-4-8` | Requires Anthropic API key |
-
----
-
-### MCP Capabilities & Guardrails
-
-| MCP Tool | Description |
-| :--- | :--- |
-| `checkTableBloat` | Identifies tables with excessive dead tuples; recommends `VACUUM` |
-| `getClusterStatus` | Checks segment status, mirroring health, and replication state |
-| `executeQuery` | Executes safe `SELECT` queries; hard-blocked from DML and DDL |
-
-| Guardrail | Detail |
-| :--- | :--- |
-| **Read-only enforcement** | Server rejects queries containing `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE` |
-| **Schema verification** | Always queries `information_schema.columns` before accessing a table |
-| **Thinking block strip** | Removes `<think>…</think>` internal reasoning from Qwen3 / DeepSeek-R1 |
-
----
-
-### Example Prompts
-
-| Prompt | MCP Tool Triggered |
-| :--- | :--- |
-| "Check bloat in the 'sales' table" | `checkTableBloat` |
-| "Show cluster status" | `getClusterStatus` |
-| "List all tables in the finance schema" | `executeQuery` |
-| "What indexes exist on the orders table?" | `executeQuery` |
-| "Show me the top 10 largest tables by size" | `executeQuery` |
-| "Are there any down segments in the cluster?" | `getClusterStatus` |
 
 ---
 
@@ -315,7 +193,7 @@ Settings persist across browsers, incognito windows, and restarts.
 
 ### Data directory layout
 
-By default all data is stored **in the application directory** (same folder as `start.sh`):
+All data is stored **in the application directory** (same folder as `start.sh`) by default:
 
 ```
 greenplum-ai-agent/
@@ -332,7 +210,7 @@ greenplum-ai-agent/
             └── {sessionId}.json # Per-session AI context window
 ```
 
-> **Security:** `users/` is listed in `.gitignore`. It contains PIN hashes and API keys — never commit this directory.
+> **Security:** `users/` is in `.gitignore`. It contains PIN hashes and API keys — never commit this directory.
 
 Override the data directory:
 ```bash
@@ -340,9 +218,9 @@ export AGENT_DATA_DIR=/your/custom/path
 ./start.sh
 ```
 
-### Server-side persistence summary
+### Server-side persistence
 
-| Data | File | When loaded |
+| Data | Stored in | When loaded |
 | :--- | :--- | :--- |
 | PIN hash | `users/{id}/config.json` | Login verification |
 | Provider, model, MCP URL, API key | `users/{id}/config.json` | After login |
