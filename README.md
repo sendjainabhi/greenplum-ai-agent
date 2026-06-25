@@ -7,6 +7,22 @@ An intelligent, read-only AI assistant for Greenplum database clusters. It conne
 
 ---
 
+## Table of Contents
+
+1. [Gallery](#gallery)
+2. [Features](#features)
+3. [Prerequisites](#prerequisites)
+4. [Quick Start](#quick-start)
+5. [First-Time Setup](#first-time-setup)
+6. [Configuration Reference](#configuration-reference)
+7. [Button Reference](#button-reference)
+8. [Data Management](#data-management)
+9. [Cloud Foundry Deployment](#cloud-foundry-deployment)
+10. [Architecture](#architecture)
+11. [Troubleshooting](#troubleshooting)
+
+---
+
 ## Gallery
 
 | Chat Interface | MCP Tool Execution |
