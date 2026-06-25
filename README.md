@@ -1,222 +1,352 @@
 # Greenplum AI Agent
 
-An intelligent, secure, and tool-driven AI agent designed to interact with Greenplum database clusters using the Model Context Protocol (MCP) and dynamic, multi-provider Large Language Models (LLMs).
-
 > [!WARNING]
-> **CRITICAL NOTICE:** This project is strictly a Proof of Concept (PoC) intended solely for experimental purposes. Do **NOT** deploy or run this application in a production environment. Use only in designated, non-production test environments.
+> **PROOF OF CONCEPT — Not for production use.**
+
+An intelligent, read-only AI assistant for Greenplum database clusters. It connects your cluster to a Large Language Model through the Model Context Protocol (MCP), lets you chat in natural language, and returns results in a polished, persistent chat interface.
 
 ---
 
-## 👋 Overview
+## Table of Contents
 
-A specialised, read-only Greenplum Database AI assistant that helps you analyse, diagnose, and optimise your Greenplum cluster. It operates via Greenplum's Model Context Protocol (MCP) tools to execute precise operations and provide actionable data insights — all through a polished chat interface.
+1. [Screenshots](#screenshots)
+2. [Prerequisites](#prerequisites)
+3. [Quick Start](#quick-start)
+4. [First-Time Setup](#first-time-setup)
+5. [Features](#features)
+6. [Configuration Reference](#configuration-reference)
+7. [Button Reference](#button-reference)
+8. [Data Management](#data-management)
+9. [Cloud Foundry Deployment](#cloud-foundry-deployment)
+10. [Architecture](#architecture)
+11. [Troubleshooting](#troubleshooting)
 
-### 📸 UI Gallery
+---
 
-| Interface Dashboard | MCP Tool Execution |
+## Screenshots
+
+| Chat Interface | MCP Tool Execution |
 | :---: | :---: |
 | ![Dashboard](img/img1.jpeg) | ![Execution](img/img2.jpeg) |
-| **Cluster Performance** | **Query Results & Tables** |
+| **Cluster Performance** | **Query Results** |
 | ![Performance](img/img3.jpeg) | ![Results](img/img4.jpeg) |
 | ![Connectivity](img/img5.jpeg) | |
 
 ---
 
-## ✨ Features
+## Prerequisites
 
-### 🎨 Mint & Forest Theme — Dark Mode by Default
-- Clean **Mint & Forest** colour palette with forest green (`#2d6a4f`) as the primary brand colour.
-- **Dark mode is the default** on every new session; users can switch to light mode anytime.
-- Theme preference is saved server-side and restored on every new browser, incognito window, or device — no more re-selecting your preferred theme.
-- 3D raised button and panel design with layered shadows throughout the UI.
-- Greenplum SVG logo in the header bar for instant brand recognition.
-
-### 🔒 PIN Authentication & Secure Login
-- Every user creates a **username + PIN** on first visit — no email, no password manager needed.
-  - Usernames: letters, numbers, hyphens and underscores only (`john` or `john_doe`, no `@` or `.`).
-- **PIN is always verified server-side** — the browser cache is never used as the authentication authority.
-- Opening a new browser, tab, or incognito window shows the **Sign In** screen (username + PIN) — the server determines who has an account, not the browser.
-- On the same browser, subsequent tabs and windows boot directly without re-entering the PIN.
-- PIN hints are supported; hints are restored automatically after signing in on a new browser.
-- Users can change their PIN at any time from **⚙️ Settings**.
-
-### 💬 Multi-Session Chat (up to 10 conversations)
-- Run up to **10 independent conversation tabs** simultaneously.
-- Each session has its own AI memory, title, and history.
-- Rename any tab with ✏️ or delete an individual conversation with 🗑️.
-- Sessions, history, and chat data persist across browser refreshes and server restarts — loaded from server files, not browser cache.
-
-### 🗄️ Server-Side Persistence (Everything from the Server)
-All user data is stored on the server filesystem and loaded fresh on every new session:
-
-| Data | Storage | Notes |
-| :--- | :--- | :--- |
-| PIN hash | `users/{userId}/config.json` | SHA-256, never stored in plain text |
-| AI provider settings | `users/{userId}/config.json` | MCP URL, model, API key |
-| Theme preference | `users/{userId}/config.json` | Restored on every new browser |
-| Chat sessions | `users/{userId}/sessions.json` | All tabs, titles, timestamps |
-| Chat messages | `users/{userId}/sessions.json` | Full message history per session |
-| Saved favourites | `users/{userId}/favourites.json` | Reusable prompts |
-| AI memory (context) | `users/{userId}/memory/*.json` | Per-session LLM context window |
-| Global admin prompt | `global-prompt.txt` | Applied to all users' requests |
-
-### 🧠 Persistent AI Memory
-- AI context is saved per-user, per-session as JSON files on the server.
-- Memory window of **30 messages** per session, retained for **90 days**.
-- Clearing chat history does **not** delete credentials or configuration.
-
-### 📊 Rich Response Formatting
-- Markdown tables, syntax-highlighted SQL/code blocks (Highlight.js), and inline charts (Chart.js).
-- **⬇ Export PDF** button on every AI response — exports with the Greenplum logo, forest-green branding, full table and code block content. Works correctly in both light and dark mode.
-- Copy button on every code block.
-
-### 🔌 Multi-Provider LLM Support
-
-| Provider | Notes |
-| :--- | :--- |
-| **Ollama** | Local models — `qwen3:30b`, `llama3`, etc. |
-| **OpenAI Compatible** | ChatGPT, vLLM, LMStudio, any OpenAI-spec endpoint |
-| **Anthropic** | Claude models via Anthropic API |
-
-### ⚡ Smart UX
-- Debounced autocomplete based on your past session history.
-- Auto-connects on page load using saved credentials (loaded from server, not browser cache).
-- Cancel in-flight requests at any time.
-- ⭐ **Favourite** any prompt for quick reuse — click `⭐ Favourite` below any message you sent.
-
-### 🔐 Admin Panel — Global Pre-Training Prompt
-Administrators can set a **global pre-training prompt** appended silently to every chat request for every user.
-
-- Accessed via **🔐 Admin Panel** in the header using a server-configured PIN.
-- Takes effect immediately on the next request after saving — no restart needed.
-- Adds to each user's personal system prompt without overriding it.
-- Useful for org-wide policies: language, scope, tone, data classification rules.
-
----
-
-## 🔧 Core Capabilities
-
-| Capability | Tool Used | Purpose |
-| :--- | :--- | :--- |
-| **Bloat Analysis** | `checkTableBloat` | Identifies oversized tables requiring `VACUUM` |
-| **Cluster Health Check** | `getClusterStatus` | Verifies segment status, mirroring, replication |
-| **Read-Only Queries** | `executeQuery` | Executes optimised `SELECT` statements |
-
----
-
-## ⚠️ Guardrails & Execution Rules
-
-- **Strictly Read-Only:** Hard-blocked from `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`.
-- **Schema-Aware:** Always queries `information_schema.columns` before accessing any table.
-- **Thinking Block Stripping:** Internal `<think>` blocks from models like Qwen3 and DeepSeek-R1 are stripped before display.
-- **Non-Production Scope:** Designed for evaluation, safe sandboxes, and development testing only.
-
----
-
-## 💡 Example Prompts
-
-- 🗣️ *"Check bloat in the 'sales' table"* — triggers `checkTableBloat`
-- 🗣️ *"Show cluster status"* — triggers `getClusterStatus`
-- 🗣️ *"List all tables in the finance schema"* — safe `SELECT` via `executeQuery`
-- 🗣️ *"What indexes exist on the orders table?"* — schema introspection query
-
----
-
-## 📌 Prerequisites
-
-| Requirement | Details |
+| Requirement | Version / Notes |
 | :--- | :--- |
 | **Java** | JDK 17 or higher |
-| **Maven** | 3.8+ (bundled `mvnw` wrapper included) |
-| **Greenplum MCP Server** | Deployed and reachable via network |
-| **LLM Engine** | Ollama (local) or cloud API credentials (OpenAI / Anthropic) |
+| **Maven** | 3.8+ (a `mvnw` wrapper is included — no separate install required) |
+| **Greenplum MCP Server** | Deployed and network-reachable from this host |
+| **LLM Engine** | Ollama (local) **or** an OpenAI-compatible / Anthropic API key |
 
 ---
 
-## 🚀 Local Deployment
+## Quick Start
 
-### 1. Clone the Repository
+### 1. Clone
 ```bash
 git clone https://github.com/sendjainabhi/greenplum-ai-agent.git
 cd greenplum-ai-agent
 ```
 
-### 2. Start Ollama (if using a local model)
+### 2. (Optional) Pull a local model
 ```bash
+ollama pull qwen3:30b
 ollama serve
 ```
 
-### 3. Build & Run
-
-**Option A — `start.sh` (recommended — builds, replaces JAR, starts the agent)**
-
+### 3. Build and run
 ```bash
 chmod +x start.sh stop.sh
 ./start.sh
 ```
 
-`start.sh` automatically:
-1. Runs `mvn clean package -DskipTests` to build a fresh JAR
-2. Replaces the old JAR in the project root with the new build from `target/`
-3. Stops any previously running instance gracefully
-4. Starts the agent as a background daemon
+`start.sh` does four things automatically:
 
-To stop the agent:
+| Step | What happens |
+| :--- | :--- |
+| **1. Build** | Runs `mvn clean package -DskipTests` |
+| **2. Replace JAR** | Removes the old JAR from the project root; copies the fresh build from `target/` |
+| **3. Stop old instance** | Gracefully terminates any previously running agent (by PID file) |
+| **4. Start daemon** | Launches the new JAR in the background; writes PID and log path |
+
+Stop at any time:
 ```bash
 ./stop.sh
 ```
 
-**Option B — Run a pre-built JAR directly**
-```bash
-java -jar greenplum-ai-agent-*.jar
+### 4. Open the app
 ```
-
-**Option C — Maven Spring Boot (development mode)**
-```bash
-mvn spring-boot:run
+http://localhost:8080
 ```
-
-### 4. Open the UI
-Navigate to `http://localhost:8080` in your browser.
 
 ---
 
-### Data & Log Location (Local)
+## First-Time Setup
 
-By default, all data is stored **in the application's own directory** (the same folder as the JAR and `start.sh`):
+### Step 1 — Create an account
+
+| Step | Action |
+| :--- | :--- |
+| 1 | Open `http://localhost:8080` — the Sign In screen appears |
+| 2 | Click **"Don't have an account? Create one"** |
+| 3 | Enter a username — letters, numbers, `-` and `_` only (no `@`, `.`, or spaces) |
+| 4 | Set a PIN (min 4 characters) and an optional hint |
+| 5 | Click **Create PIN** — account is created and the app loads |
+
+> **Returning to the same browser:** The app remembers your username — you only need your PIN.
+> **New browser or incognito:** Enter username and PIN — the server verifies against your stored account.
+
+### Step 2 — Configure AI provider
+
+| Step | Action |
+| :--- | :--- |
+| 1 | Click **⚙️ Settings** in the header |
+| 2 | Upload a `.properties` file or fill in the fields manually |
+| 3 | Set: LLM Provider, Endpoint URL, API Key, Model Name, MCP Server URL |
+| 4 | Click **Test Connection** to verify everything is reachable |
+| 5 | Click **Save Settings** — configuration is saved to the server |
+
+Settings persist across browsers, incognito windows, and restarts.
+
+---
+
+## Features
+
+### UI & Theme
+
+| Feature | Detail |
+| :--- | :--- |
+| **Colour palette** | Mint & Forest — forest green (`#2d6a4f`) primary; pale mint backgrounds; white surfaces |
+| **Dark mode (default)** | Enabled on first load; deep forest greens (`#071510` body, `#0e2318` surface) |
+| **Light mode** | Soft mint wash (`#f0fdf4`) body with white surfaces and mint-tinted borders |
+| **Theme toggle** | `🌙 Dark Mode` / `☀️ Light Mode` button in the header; switches instantly |
+| **Theme persistence** | Saved server-side in `users/{id}/config.json` — restored on any device |
+| **Greenplum logo** | SVG logo mark in the header bar; renders correctly in dark and light mode |
+| **3D buttons** | All buttons use layered `box-shadow` with a press-down `transform: translateY()` on click |
+| **Sidebar depth** | Forest-green separator shadow on the left panel; active session gets a green left accent bar |
+
+---
+
+### Authentication & Security
+
+| Feature | Detail |
+| :--- | :--- |
+| **Account creation** | Username + PIN (min 4 chars) + optional hint; PIN never stored in plain text |
+| **PIN hashing** | SHA-256 hash stored in `users/{id}/config.json`; plain PIN never written to disk |
+| **Server-side auth** | Every login verified against the server — browser cache is never the authority |
+| **New browser / incognito** | Always shows Sign In; server checks for a registered account |
+| **Same browser** | Subsequent visits require PIN only — username already stored in localStorage |
+| **PIN hint** | Optional hint set at creation; shown on the Forgot PIN screen |
+| **Change PIN** | Available in ⚙️ Settings; old PIN verified server-side before new one is accepted |
+| **Forgot PIN flow** | Shows hint → option to **Reset Account** (deletes all data, forces fresh setup) |
+| **Admin PIN** | Separate server-configured PIN (`ADMIN_PIN` env var) guards the Admin Panel |
+| **Credential safety** | `users/` is `.gitignore`d; API keys are stripped from settings GET responses |
+
+---
+
+### Chat & Sessions
+
+| Feature | Detail |
+| :--- | :--- |
+| **Max concurrent sessions** | **10 tabs** — oldest tab is dropped when the limit is reached |
+| **Session persistence** | Sessions, titles, messages, and timestamps saved to `users/{id}/sessions.json` |
+| **Cross-device restore** | Sign in from any browser — all sessions load from the server |
+| **AI memory per session** | Separate LangChain4j memory chain per tab; 30-message window; 90-day retention |
+| **Auto-title** | First message of each session becomes the tab title automatically |
+| **Session rename** | Click ✏️ on any sidebar tab to rename inline |
+| **Session delete** | Click 🗑️ on any tab; removes the session and its AI memory from the server |
+| **Cancel in-flight** | A **Cancel** button replaces Send while a request is running; aborts immediately |
+| **Save debounce** | Session state is saved to the server 3 seconds after any change |
+| **Autocomplete** | Debounced suggestions from your prompt history appear as you type |
+
+---
+
+### Response Formatting
+
+| Feature | Detail |
+| :--- | :--- |
+| **Markdown** | Full CommonMark via `marked.js` — headings, lists, bold, italic, blockquotes |
+| **Code blocks** | Syntax highlighted via `highlight.js`; monospace; dark-themed code area |
+| **Copy button** | Every code block has a `📋 Copy` button; confirms with `✅ Copied!` for 2 seconds |
+| **Tables** | Horizontal scroll; forest-green headers; alternating mint-tinted rows |
+| **Inline charts** | Chart.js renders bar/line/pie charts when the AI returns a `chart` code block |
+| **Thinking block strip** | `<think>…</think>` content from Qwen3 / DeepSeek-R1 removed before display |
+| **Streaming** | Tokens stream in real-time; a spinner shows while the request is in-flight |
+
+---
+
+### PDF Export
+
+| Feature | Detail |
+| :--- | :--- |
+| **Trigger** | `⬇ Export PDF` button below every AI response |
+| **Header** | Greenplum SVG logo, forest-green branding, query callout box |
+| **Tables** | Forest-green `th` headers; alternating mint row tints; full borders |
+| **Code blocks** | Light background (`#f5f9f6`) with dark text — readable on white paper |
+| **Charts** | Canvas charts converted to PNG snapshots before PDF render |
+| **Dark-mode safe** | `data-theme` removed before render so CSS variables resolve to light values |
+| **Filename** | `greenplum-{query-slug}-{YYYY-MM-DD}.pdf` |
+
+---
+
+### Saved Favourites
+
+| Feature | Detail |
+| :--- | :--- |
+| **Save a prompt** | Click `⭐ Favourite` below any message you sent |
+| **Label it** | Give the favourite a short name (e.g. "Weekly Revenue Report") |
+| **Access** | **⭐ Saved Favourites** panel in the left sidebar |
+| **Reuse** | Click any favourite to fill the input; edit before sending if needed |
+| **Delete** | 🗑️ next to each favourite removes it individually |
+| **Persistence** | Stored server-side in `users/{id}/favourites.json`; survives chat clears and browser changes |
+
+---
+
+### Admin Panel
+
+| Feature | Detail |
+| :--- | :--- |
+| **Access** | Click `🔐 Admin Panel` in the header; enter the admin PIN to unlock |
+| **Admin PIN** | Set via `ADMIN_PIN` environment variable at startup |
+| **Global prompt** | Free-text prompt silently prepended to every user's chat request |
+| **Scope** | Applies to **all users** — individual user system prompts appended after |
+| **Effect** | Immediate — takes effect on the very next chat request after saving |
+| **Disable** | Leave the global prompt blank and save |
+
+---
+
+### LLM Provider Support
+
+| Provider | Example Endpoint | Example Models | Notes |
+| :--- | :--- | :--- | :--- |
+| **Ollama** | `http://localhost:11434` | `qwen3:30b`, `llama3`, `mistral` | Local inference; no API key required |
+| **OpenAI Compatible** | Any OpenAI-spec URL | `gpt-4o`, `gpt-4-turbo`, vLLM | Works with ChatGPT, vLLM, LMStudio |
+| **Anthropic** | `https://api.anthropic.com` | `claude-sonnet-4-6`, `claude-opus-4-8` | Requires Anthropic API key |
+
+---
+
+### MCP Capabilities & Guardrails
+
+| MCP Tool | Description |
+| :--- | :--- |
+| `checkTableBloat` | Identifies tables with excessive dead tuples; recommends `VACUUM` |
+| `getClusterStatus` | Checks segment status, mirroring health, and replication state |
+| `executeQuery` | Executes safe `SELECT` queries; hard-blocked from DML and DDL |
+
+| Guardrail | Detail |
+| :--- | :--- |
+| **Read-only enforcement** | Server rejects queries containing `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE` |
+| **Schema verification** | Always queries `information_schema.columns` before accessing a table |
+| **Thinking block strip** | Removes `<think>…</think>` internal reasoning from Qwen3 / DeepSeek-R1 |
+
+---
+
+### Example Prompts
+
+| Prompt | MCP Tool Triggered |
+| :--- | :--- |
+| "Check bloat in the 'sales' table" | `checkTableBloat` |
+| "Show cluster status" | `getClusterStatus` |
+| "List all tables in the finance schema" | `executeQuery` |
+| "What indexes exist on the orders table?" | `executeQuery` |
+| "Show me the top 10 largest tables by size" | `executeQuery` |
+| "Are there any down segments in the cluster?" | `getClusterStatus` |
+
+---
+
+## Configuration Reference
+
+### Data directory layout
+
+By default all data is stored **in the application directory** (same folder as `start.sh`):
 
 ```
 greenplum-ai-agent/
-├── greenplum-agent.log          # Application log
-├── global-prompt.txt            # Admin global pre-training prompt (if set)
-├── stdout.log                   # Console output log
+├── greenplum-agent.log          # Spring Boot application log
+├── stdout.log                   # Console output from daemon
+├── agent.pid                    # Running PID (runtime only)
+├── global-prompt.txt            # Admin pre-training prompt (if set)
 └── users/
     └── {username}/
-        ├── config.json          # Settings, PIN hash, theme preference, API config
-        ├── sessions.json        # Chat sessions, messages, history
-        ├── favourites.json      # User's saved favourite prompts
+        ├── config.json          # PIN hash, provider, theme, system prompt
+        ├── sessions.json        # Sessions, messages, suggestion history
+        ├── favourites.json      # Saved favourite prompts
         └── memory/
-            └── {sessionId}.json # Per-session AI memory (LLM context window)
+            └── {sessionId}.json # Per-session AI context window
 ```
 
-> **Note:** The `users/` directory contains PIN hashes and API keys — it is excluded from version control via `.gitignore` and should never be committed or shared.
+> **Security:** `users/` is listed in `.gitignore`. It contains PIN hashes and API keys — never commit this directory.
 
-To use a custom data directory:
+Override the data directory:
 ```bash
 export AGENT_DATA_DIR=/your/custom/path
 ./start.sh
 ```
 
+### Server-side persistence summary
+
+| Data | File | When loaded |
+| :--- | :--- | :--- |
+| PIN hash | `users/{id}/config.json` | Login verification |
+| Provider, model, MCP URL, API key | `users/{id}/config.json` | After login |
+| Theme preference | `users/{id}/config.json` | After login (applied before first paint) |
+| Custom system prompt | `users/{id}/config.json` | Sent with every chat request |
+| Sessions, messages, timestamps | `users/{id}/sessions.json` | After login |
+| Prompt suggestion history | `users/{id}/sessions.json` | After sessions load |
+| Saved favourites | `users/{id}/favourites.json` | On sidebar render |
+| AI context window | `users/{id}/memory/*.json` | On every chat request |
+| Global admin prompt | `global-prompt.txt` | On every chat request |
+
 ---
 
-## ☁️ Cloud Foundry Deployment
+## Button Reference
 
-### 1. Build the JAR
+| Button | Location | What it does |
+| :--- | :--- | :--- |
+| `🌙 Dark Mode` / `☀️ Light Mode` | Header | Toggle theme; preference saved to server |
+| `🗑️ Clear All Data` | Header | Delete all chats and AI memory; credentials kept |
+| `🔐 Admin Panel` | Header | Open global prompt editor (admin PIN required) |
+| `⚙️ Settings` | Header | Configure LLM provider, MCP, system prompt, PIN |
+| `+ New Chat` | Sidebar | Start a new conversation tab (max 10) |
+| `⭐ Favourite` | Below user messages | Save prompt to favourites with a label |
+| `⬇ Export PDF` | Below AI responses | Download branded PDF of the AI response |
+| `Test Connection` | Settings modal | Verify MCP + LLM endpoint connectivity |
+| `Save Settings` | Settings modal | Persist configuration to server |
+| `Update PIN` | Settings modal | Change current PIN (verifies old PIN first) |
+| `Create PIN` | Account setup | Finalise new account creation |
+| `Unlock →` | PIN entry | Verify PIN and enter the app |
+| `Forgot PIN?` | PIN entry | Show hint and option to reset account |
+| `Verify & Enter` | Admin Panel | Authenticate with admin PIN |
+| `Save Prompt` | Admin Panel | Save global pre-training prompt |
+| `Save Favourite` | Favourites modal | Persist a labelled favourite prompt |
+| `Reset Account` | Forgot PIN screen | Delete all user data and start fresh |
+| `Yes, Reset Account` | Reset confirmation | Confirm full account wipe |
+
+---
+
+## Data Management
+
+| Action | What is deleted | What is kept |
+| :--- | :--- | :--- |
+| Per-tab 🗑️ | That session's messages and AI memory | All other sessions, credentials, config |
+| **🗑️ Clear All Data** | All sessions and all AI memory | PIN, provider config, theme, favourites |
+| **Reset Account** | Everything — credentials, config, sessions, favourites | Nothing — must recreate account |
+
+---
+
+## Cloud Foundry Deployment
+
+### Build
 ```bash
 mvn clean package -DskipTests
 ```
 
-### 2. Configure `manifest.yml`
+### `manifest.yml`
 ```yaml
 applications:
   - name: greenplum-ai-agent
@@ -231,26 +361,18 @@ applications:
       ADMIN_PIN: <your-admin-pin>
 ```
 
-> **Security:** Do not commit `manifest.yml` with an actual `ADMIN_PIN` value to version control.
+> Do not commit `manifest.yml` with a real `ADMIN_PIN` value.
 
-### 3. Push to Cloud Foundry
+### Push & tail logs
 ```bash
 cf login -a <api-endpoint>
 cf push
-```
-
-### 4. View Logs
-```bash
 cf logs greenplum-ai-agent --recent
-cf logs greenplum-ai-agent             # live tail
 ```
 
-### Persistent Storage on CF (Recommended)
+### Persistent storage (recommended for CF)
 
-CF uses an ephemeral filesystem by default — user configs, chat memory, and the global prompt are lost on restarts. To persist data:
-
-1. Provision an NFS Volume Service through your CF operator.
-2. Bind it and set `AGENT_DATA_DIR`:
+CF's filesystem is ephemeral — data is lost on restarts. Bind an NFS volume service:
 
 ```yaml
 env:
@@ -260,133 +382,77 @@ services:
   - greenplum-agent-volume
 ```
 
-Without a persistent volume, users re-enter credentials after each `cf push` via the **Sign In** screen.
-
 ---
 
-## ⚙️ First-Time Setup
+## Architecture
 
-### Create a New Account (First Visit)
-1. Open the app — a **Sign In** screen appears.
-2. Click **"Don't have an account? Create one"** (text link below the Sign In button).
-3. Choose a **username** — letters, numbers, hyphens and underscores only (e.g. `john` or `john_doe`). No email addresses.
-4. Set a **PIN** (minimum 4 characters) and an optional memory hint.
-5. Click **Create PIN** — your account is created and the app loads immediately.
+```
+Browser  (index.html · app.js · style.css)
+    │
+    │  Authentication
+    ├── GET  /api/auth/status        → Is any account registered on server?
+    ├── POST /api/auth/setup         → Create account (stores SHA-256 PIN hash)
+    ├── POST /api/auth/verify        → Verify PIN server-side
+    │
+    │  Configuration & Sessions
+    ├── GET  /api/settings/load      → Load config (API key stripped from response)
+    ├── POST /api/settings           → Save config + theme to users/{id}/config.json
+    ├── GET  /api/sessions/load      → Load sessions, messages, history
+    ├── POST /api/sessions/save      → Persist sessions (3-second debounce from browser)
+    │
+    │  Chat
+    ├── POST /api/chat               → ChatController
+    │                                       │
+    │                               GreenplumAgent (LangChain4j)
+    │                                       │
+    │                           ┌───────────┴──────────────┐
+    │                      LLM Provider             Greenplum MCP Server
+    │                (Ollama / OpenAI / Anthropic)          │
+    │                                               Greenplum Database
+    │
+    │  Memory & Admin
+    ├── POST /api/memory/clear       → Delete session AI memory files on server
+    ├── POST /api/admin/verify       → Verify admin PIN
+    ├── POST /api/admin/save         → Write global-prompt.txt
+    │
+    │  Favourites
+    ├── POST /api/favourites/list    → Read users/{id}/favourites.json
+    ├── POST /api/favourites/save    → Append favourite to file
+    └── POST /api/favourites/delete  → Remove entry from file
+```
 
-### Sign In (Returning User — New Browser or Incognito)
-1. Open the app — the **Sign In** screen appears (server determines who has an account).
-2. Enter your username and PIN.
-3. Click **Sign In** — the server verifies your PIN and restores your full session: settings, chat history, theme, and favourites.
+**Chat request data flow:**
 
-> On the **same browser**, subsequent tabs and windows unlock with PIN only — no username required.
-
-### Configure AI Provider
-1. Click **⚙️ Settings** in the header.
-2. Upload a `.properties` credential file or fill in the fields manually:
-   - **AI Provider:** Ollama / OpenAI Compatible / Anthropic
-   - **Endpoint / Base URL**
-   - **API Key** (if required)
-   - **Model Name** (e.g. `qwen3:30b`, `gpt-4o`, `claude-sonnet-4-6`)
-   - **MCP Server URL & Auth Header**
-3. Click **Test Connection** to verify connectivity, then **Save Settings**.
-
----
-
-## 🖱️ Button Reference
-
-| Button | Location | Action |
-| :--- | :--- | :--- |
-| `☀️ Light Mode` / `🌙 Dark Mode` | Header | Toggle theme (saved server-side) |
-| `🗑️ Clear All Data` | Header | Delete all chats and AI memory (keeps credentials) |
-| `🔐 Admin Panel` | Header | Open global pre-training prompt editor (PIN protected) |
-| `⚙️ Settings` | Header | Configure AI provider, MCP, PIN |
-| `+ New Chat` | Sidebar | Start a new conversation tab |
-| `⭐ Favourite` | Below your messages | Save prompt to favourites list |
-| `⬇ Export PDF` | Below AI responses | Export response as branded PDF |
-| `Test Connection` | Settings modal | Verify MCP + LLM connectivity |
-| `Save Settings` | Settings modal | Persist configuration to server |
-| `Create PIN` | Account setup | Finalise account creation |
-| `Unlock →` | PIN entry | Verify PIN and enter the app |
-| `Verify & Enter` | Admin Panel | Authenticate with admin PIN |
-| `Reset Account` | Forgot PIN screen | Delete all data and start fresh |
-
----
-
-## 🗑️ Managing Chat History
-
-| Action | What it does |
+| Step | What happens |
 | :--- | :--- |
-| 🗑️ (per tab) | Deletes that single conversation and its AI memory |
-| **🗑️ Clear All Data** (header) | Deletes all conversations and all AI memory |
-| Both of the above | **Credentials, PIN, theme, and configuration are preserved** |
-| **Reset Account** (Forgot PIN → Reset) | Deletes everything including credentials — requires setting up a new account |
+| 1 | User sends a message |
+| 2 | Server reads `global-prompt.txt` (admin pre-training prompt) |
+| 3 | Server reads user's `systemPrompt` from `config.json` |
+| 4 | Combined prompt + message sent to `GreenplumAgent.chat()` |
+| 5 | LLM decides whether to call MCP tools; tools query Greenplum |
+| 6 | Response sanitised (thinking blocks stripped) |
+| 7 | Response streamed to the browser |
+| 8 | Browser updates session state; saves to server after 3-second debounce |
 
 ---
 
-## 📄 Monitoring & Troubleshooting
+## Troubleshooting
 
-### Local Logs
-```bash
-# Application log
-tail -f greenplum-agent.log
-
-# Console output
-tail -f stdout.log
-```
-
-### CF Logs
-```bash
-cf logs greenplum-ai-agent --recent
-cf logs greenplum-ai-agent
-```
-
-### Common Issues
-
-| Symptom | Likely Cause | Fix |
+| Symptom | Likely cause | Fix |
 | :--- | :--- | :--- |
-| Sign In appears on every new browser | Expected — server-side auth | Enter username + PIN to sign in |
-| "Configuration Required" on first chat | No credentials saved yet | Open ⚙️ Settings and save your config |
-| Settings not loading in incognito | Should not happen — settings load from server | Check server is running and reachable |
-| Status shows Disconnected | Model or MCP unreachable | Click Test Connection in Settings |
-| PDF exports blank or invisible content | Old browser cache | Hard-refresh (Cmd/Ctrl + Shift + R) |
-| "Request Timed Out" | Model taking too long | Try a lighter model or simpler query |
-| Data lost after CF push | No persistent volume | Use `AGENT_DATA_DIR` with a mounted NFS volume |
+| Sign In screen on every new browser | Expected — server-side auth | Enter username + PIN |
+| "Configuration Required" on first chat | No credentials saved yet | ⚙️ Settings → fill in → Save Settings |
+| Settings not loading in incognito | Agent not running | `cat agent.pid` and `tail -f stdout.log` |
+| Status dot shows Disconnected | MCP or LLM unreachable | Settings → Test Connection |
+| PDF body is blank or text invisible | Browser cached old JS | Hard-refresh: Cmd/Ctrl + Shift + R |
+| "Request Timed Out" | Model too slow | Switch to a lighter model |
+| Data lost after CF push | No persistent volume | Set `AGENT_DATA_DIR` to an NFS mount path |
+| Username rejected at sign-up | Contains `@`, `.`, or spaces | Use letters, numbers, `-`, `_` only |
+| Port 8080 already in use | Old instance not stopped | `./stop.sh` or `lsof -ti :8080 \| xargs kill -9` |
+| JAR not found after `start.sh` | Maven build failed | Check Maven output for compile errors |
 
----
-
-## 🏗️ Architecture
-
+### Log locations
+```bash
+tail -f greenplum-agent.log    # Spring Boot application log
+tail -f stdout.log             # Console output from the daemon
 ```
-Browser (index.html + app.js + style.css)
-    │
-    ├── GET  /api/auth/status          → Check if any user account exists on server
-    ├── POST /api/auth/setup           → Create account (stores SHA-256 PIN hash)
-    ├── POST /api/auth/verify          → Verify PIN server-side
-    ├── GET  /api/settings/load        → Load config from server (no PIN hash returned)
-    ├── POST /api/settings             → Save config + theme to server
-    ├── GET  /api/sessions/load        → Load sessions, messages, history from server
-    ├── POST /api/sessions/save        → Persist sessions, messages, history to server
-    │
-    ├── POST /api/chat                 → ChatController → GreenplumAgent (LangChain4j)
-    │                                         │
-    │                                   GreenplumMcpTools
-    │                                         │
-    │                                   Greenplum MCP Server
-    │                                         │
-    │                                   Greenplum Database
-    │
-    ├── POST /api/memory/clear         → Delete per-session AI memory files
-    ├── POST /api/admin/verify         → Verify admin PIN
-    ├── POST /api/admin/save           → Save global-prompt.txt
-    ├── POST /api/favourites/list      → List user favourites
-    ├── POST /api/favourites/save      → Save a favourite prompt
-    └── POST /api/favourites/delete    → Delete a favourite prompt
-```
-
-**Data flow for each chat request:**
-1. User sends a message
-2. Server loads `global-prompt.txt` from disk (if set by admin)
-3. Server loads user's `systemPrompt` from their `config.json`
-4. Combined prompt → `GreenplumAgent.chat()` → LLM → optional MCP tool calls → response
-5. Response sanitised (thinking blocks stripped, invalid characters removed) → returned to browser
-6. Browser saves updated session data back to server via `POST /api/sessions/save` (3-second debounce)
