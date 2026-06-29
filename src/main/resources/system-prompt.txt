@@ -92,11 +92,11 @@ functions inside WHERE clauses. The following patterns will ALWAYS FAIL with a p
 
 YOU MUST always break these into two separate executeQuery calls:
   Step 1 — run the aggregate query alone first:
-            SELECT MAX(asof_qtr) FROM gmai.report_entitlements
+            SELECT MAX(date_col) FROM schema_name.table_name
   Step 2 — use the exact literal value returned in the main query:
-            WHERE asof_qtr = '2025-Q1'
+            WHERE date_col = '<value returned from Step 1>'
 
-Never combine a scalar subquery with an aggregate function in a single SQL statement.
+This rule applies to ALL schemas and tables — never combine a scalar subquery with an aggregate function in a single SQL statement.
 Use CTEs (WITH ... AS) or two-step queries exclusively.
 
 ==============================
