@@ -38,6 +38,7 @@
                 <div class="status-container">
                     <span id="headerStatusDot" class="status-dot status-unknown"></span>
                     <span id="headerStatusText">Disconnected</span>
+                    <span id="headerModeBadge" style="display:none; font-size:0.72em; padding:2px 9px; border-radius:10px; background:var(--border-subtle); color:var(--muted-text); margin-left:8px; font-weight:500; letter-spacing:0.02em;"></span>
                 </div>
             </div>
             <div class="header-actions">
@@ -316,13 +317,41 @@
 
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
 
+        <!-- Data Platform Mode selector -->
         <div class="form-group">
-            <label>MCP Server URL</label>
-            <input type="text" id="mcpUrl" placeholder="http://xx.xx.xx.xx:80/mcp">
+            <label>Data Platform Mode</label>
+            <select id="activeMode">
+                <option value="greenplum">Greenplum</option>
+                <option value="openmetadata">OpenMetadata</option>
+                <option value="both">Both (Greenplum + OpenMetadata)</option>
+            </select>
+            <div style="font-size:0.8em; color:#64748b; margin-top:-5px;">Selects which MCP server(s) the agent connects to.</div>
         </div>
-        <div class="form-group">
-            <label>MCP Auth Header</label>
-            <input type="password" id="mcpAuth" placeholder="Basic key">
+
+        <!-- Greenplum MCP (visible when mode = greenplum or both) -->
+        <div id="gpMcpSection" style="display:block; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
+            <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">🐘 Greenplum MCP</div>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" id="mcpUrl" placeholder="http://xx.xx.xx.xx:80/mcp">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Auth Header</label>
+                <input type="password" id="mcpAuth" placeholder="Basic &lt;base64&gt;">
+            </div>
+        </div>
+
+        <!-- OpenMetadata MCP (visible when mode = openmetadata or both) -->
+        <div id="omMcpSection" style="display:none; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
+            <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">📂 OpenMetadata MCP</div>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" id="omMcpUrl" placeholder="http://xx.xx.xx.xx:8585/mcp">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Auth Header</label>
+                <input type="password" id="omMcpAuth" placeholder="Bearer &lt;jwt-token&gt; or Basic &lt;base64&gt;">
+            </div>
         </div>
 
         <div id="testResult" class="test-result"></div>
@@ -335,15 +364,29 @@
 
         <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
 
-        <!-- Change PIN section -->
-        <div style="margin-bottom: 6px; font-weight: 600; color: #374151;">🔒 Change PIN</div>
+        <div style="text-align:center;">
+            <a href="#" onclick="openChangePinModal(); return false;"
+               style="color:#6366f1; font-size:0.875em; font-weight:500; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                🔒 Change PIN
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== CHANGE PIN ===================== -->
+<div class="modal-overlay" id="changePinModal" style="display: none;">
+    <div class="modal-box">
+        <h3>🔒 Change PIN</h3>
+        <p style="font-size:0.88em; color:#374151; margin-bottom:16px;">
+            Update your PIN. Your username stays the same.
+        </p>
         <div class="form-group">
             <label>Current PIN</label>
             <input type="password" id="changePinCurrent" placeholder="Enter current PIN" maxlength="20">
         </div>
         <div class="form-group">
             <label>New PIN</label>
-            <input type="password" id="changePinNew" placeholder="Enter new PIN" maxlength="20">
+            <input type="password" id="changePinNew" placeholder="Enter new PIN (min. 4 chars)" maxlength="20">
         </div>
         <div class="form-group">
             <label>Confirm New PIN</label>
@@ -354,12 +397,13 @@
             <input type="text" id="changePinHint" placeholder="e.g. My first car + mum birthday month" maxlength="100">
         </div>
         <div id="changePinError" class="test-result" style="display:none; margin-bottom:12px;"></div>
-        <div style="display:flex; justify-content:flex-end;">
+        <div class="modal-actions" style="justify-content:space-between;">
+            <button type="button" class="btn-cancel" onclick="closeChangePinModal()">Cancel</button>
             <button type="button" class="btn-save" onclick="changePin()">Update PIN</button>
         </div>
     </div>
 </div>
 
-<script src="/js/app.js?v=33"></script>
+<script src="/js/app.js?v=38"></script>
 </body>
 </html>

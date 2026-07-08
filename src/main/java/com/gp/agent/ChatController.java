@@ -36,9 +36,11 @@ public class ChatController {
 
     private final ChatMemoryProvider memoryProvider;
 
-    // Agent cache — keyed by userId, rebuilt only when config changes
-    private final ConcurrentHashMap<String, GreenplumAgent> agentCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, String>         configHashCache = new ConcurrentHashMap<>();
+    // Agent cache — keyed by userId, rebuilt only when config changes.
+    // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
+    // OpenMetadataAgent can be stored without a shared supertype.
+    private final ConcurrentHashMap<String, java.util.function.BiFunction<String, String, String>> agentCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> configHashCache = new ConcurrentHashMap<>();
 
     // Admin PIN — set via admin.pin in application.yml (overridable via ADMIN_PIN env var)
     @Value("${admin.pin}")
@@ -248,15 +250,19 @@ public class ChatController {
         }
 
         try {
-            String provider  = config.getOrDefault("provider",      "ollama").toLowerCase();
-            String apiKey    = config.getOrDefault("apiKey",         "");
-            String baseUrl   = config.getOrDefault("baseUrl",        "");
-            String mcpUrl    = config.getOrDefault("mcpUrl",         "");
-            String mcpAuth   = config.getOrDefault("mcpAuth",        "");
-            String sysPrompt = config.getOrDefault("systemPrompt",   "");
+            String provider   = config.getOrDefault("provider",    "ollama").toLowerCase();
+            String apiKey     = config.getOrDefault("apiKey",      "");
+            String baseUrl    = config.getOrDefault("baseUrl",     "");
+            String mcpUrl     = config.getOrDefault("mcpUrl",      "");
+            String mcpAuth    = config.getOrDefault("mcpAuth",     "");
+            String activeMode = config.getOrDefault("activeMode",  "greenplum").toLowerCase();
+            String omMcpUrl   = config.getOrDefault("omMcpUrl",    "");
+            String omMcpAuth  = config.getOrDefault("omMcpAuth",   "");
+            String sysPrompt  = config.getOrDefault("systemPrompt","");
 
-            GreenplumAgent agent = getOrBuildAgent(
-                    userId, provider, modelName, apiKey, baseUrl, mcpUrl, mcpAuth);
+            java.util.function.BiFunction<String, String, String> chatFn = getOrBuildChatFn(
+                    userId, provider, modelName, apiKey, baseUrl,
+                    mcpUrl, mcpAuth, activeMode, omMcpUrl, omMcpAuth);
 
             String memoryId = userId + "::" + sessionId;
 
@@ -269,9 +275,16 @@ public class ChatController {
             if (!sysPrompt.trim().isEmpty()) {
                 promptBuilder.append("\n\n[USER CUSTOM INSTRUCTIONS:\n").append(sysPrompt).append("]");
             }
+            if ("both".equals(activeMode)) {
+                promptBuilder.append("\n\n[DUAL MODE: You have access to BOTH Greenplum database tools "
+                        + "(executeQuery, getClusterStatus, checkTableBloat) AND OpenMetadata catalog tools "
+                        + "(searchAssets, getTableDetails, getLineage, listDatabases, getDataQualityResults). "
+                        + "Use Greenplum tools for SQL queries and live data retrieval. "
+                        + "Use OpenMetadata tools for asset discovery, metadata, lineage, and data quality.]");
+            }
             String finalPrompt = promptBuilder.toString();
 
-            String raw      = agent.chat(memoryId, finalPrompt);
+            String raw      = chatFn.apply(memoryId, finalPrompt);
             String response = sanitizeResponse(raw);
             log.info("[CHAT] user={} session={} length={}", userId, sessionId, response.length());
 
@@ -310,8 +323,11 @@ public class ChatController {
         String modelName = request.getOrDefault("modelName", "").trim();
         String apiKey    = request.getOrDefault("apiKey",    "");
         String baseUrl   = request.getOrDefault("baseUrl",   "");
-        String mcpUrl    = request.getOrDefault("mcpUrl",    "");
-        String mcpAuth   = request.getOrDefault("mcpAuth",   "");
+        String mcpUrl     = request.getOrDefault("mcpUrl",     "");
+        String mcpAuth    = request.getOrDefault("mcpAuth",    "");
+        String activeMode = request.getOrDefault("activeMode", "greenplum").toLowerCase();
+        String omMcpUrl   = request.getOrDefault("omMcpUrl",   "");
+        String omMcpAuth  = request.getOrDefault("omMcpAuth",  "");
 
         if (modelName.isEmpty()) {
             return ResponseEntity.badRequest()
@@ -330,13 +346,25 @@ public class ChatController {
             modelMessage = e.getMessage();
         }
 
-        // Test MCP server
-        Map<String, String> mcpResult = GreenplumMcpTools.testConnection(mcpUrl, mcpAuth);
-        String mcpStatus  = mcpResult.get("status");
-        String mcpMessage = mcpResult.get("message");
+        // Test Greenplum MCP (skip when mode is openmetadata-only)
+        String mcpStatus = "skipped", mcpMessage = "";
+        if (!"openmetadata".equals(activeMode)) {
+            Map<String, String> gpResult = GreenplumMcpTools.testConnection(mcpUrl, mcpAuth);
+            mcpStatus  = gpResult.get("status");
+            mcpMessage = gpResult.get("message");
+        }
+
+        // Test OpenMetadata MCP (skip when mode is greenplum-only)
+        String omMcpStatus = "skipped", omMcpMessage = "";
+        if (!"greenplum".equals(activeMode)) {
+            Map<String, String> omResult = OpenMetadataMcpTools.testConnection(omMcpUrl, omMcpAuth);
+            omMcpStatus  = omResult.get("status");
+            omMcpMessage = omResult.get("message");
+        }
 
         boolean allOk = "success".equals(modelStatus)
-                && ("success".equals(mcpStatus) || "skipped".equals(mcpStatus));
+                && ("success".equals(mcpStatus)   || "skipped".equals(mcpStatus))
+                && ("success".equals(omMcpStatus) || "skipped".equals(omMcpStatus));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status",       allOk ? "success" : "error");
@@ -344,7 +372,9 @@ public class ChatController {
         result.put("modelMessage", modelMessage);
         result.put("mcpStatus",    mcpStatus);
         result.put("mcpMessage",   mcpMessage);
-        log.info("[TEST] model={} mcp={} provider={}", modelStatus, mcpStatus, provider);
+        result.put("omMcpStatus",  omMcpStatus);
+        result.put("omMcpMessage", omMcpMessage);
+        log.info("[TEST] model={} gp-mcp={} om-mcp={} mode={}", modelStatus, mcpStatus, omMcpStatus, activeMode);
         return ResponseEntity.ok(result);
     }
 
@@ -492,21 +522,51 @@ public class ChatController {
         return new LinkedHashMap<>();
     }
 
-    private GreenplumAgent getOrBuildAgent(String userId, String provider, String modelName,
-                                            String apiKey, String baseUrl,
-                                            String mcpUrl, String mcpAuth) {
-        String hash = provider + "|" + modelName + "|" + apiKey + "|" + baseUrl + "|" + mcpUrl + "|" + mcpAuth;
+    private java.util.function.BiFunction<String, String, String> getOrBuildChatFn(
+            String userId, String provider, String modelName,
+            String apiKey, String baseUrl,
+            String mcpUrl, String mcpAuth,
+            String activeMode, String omMcpUrl, String omMcpAuth) {
+
+        String hash = provider + "|" + modelName + "|" + apiKey + "|" + baseUrl + "|"
+                    + mcpUrl + "|" + mcpAuth + "|" + activeMode + "|" + omMcpUrl + "|" + omMcpAuth;
+
         if (!hash.equals(configHashCache.get(userId))) {
-            ChatLanguageModel   model    = buildModel(provider, modelName, apiKey, baseUrl, 600);
-            GreenplumMcpTools   mcpTools = new GreenplumMcpTools(mcpUrl, mcpAuth);
-            GreenplumAgent      agent    = AiServices.builder(GreenplumAgent.class)
-                    .chatLanguageModel(model)
-                    .chatMemoryProvider(memoryProvider)
-                    .tools(mcpTools)
-                    .build();
-            agentCache.put(userId, agent);
+            ChatLanguageModel model = buildModel(provider, modelName, apiKey, baseUrl, 600);
+
+            java.util.function.BiFunction<String, String, String> fn;
+
+            if ("openmetadata".equals(activeMode)) {
+                OpenMetadataMcpTools omTools = new OpenMetadataMcpTools(omMcpUrl, omMcpAuth);
+                OpenMetadataAgent agent = AiServices.builder(OpenMetadataAgent.class)
+                        .chatLanguageModel(model)
+                        .chatMemoryProvider(memoryProvider)
+                        .tools(omTools)
+                        .build();
+                fn = agent::chat;
+            } else if ("both".equals(activeMode)) {
+                GreenplumMcpTools    gpTools = new GreenplumMcpTools(mcpUrl, mcpAuth);
+                OpenMetadataMcpTools omTools = new OpenMetadataMcpTools(omMcpUrl, omMcpAuth);
+                GreenplumAgent agent = AiServices.builder(GreenplumAgent.class)
+                        .chatLanguageModel(model)
+                        .chatMemoryProvider(memoryProvider)
+                        .tools(gpTools, omTools)
+                        .build();
+                fn = agent::chat;
+            } else {
+                GreenplumMcpTools gpTools = new GreenplumMcpTools(mcpUrl, mcpAuth);
+                GreenplumAgent agent = AiServices.builder(GreenplumAgent.class)
+                        .chatLanguageModel(model)
+                        .chatMemoryProvider(memoryProvider)
+                        .tools(gpTools)
+                        .build();
+                fn = agent::chat;
+            }
+
+            agentCache.put(userId, fn);
             configHashCache.put(userId, hash);
-            log.info("[AGENT] Built new agent for user {} (provider={} model={})", userId, provider, modelName);
+            log.info("[AGENT] Built new agent for user {} (mode={} provider={} model={})",
+                    userId, activeMode, provider, modelName);
         }
         return agentCache.get(userId);
     }

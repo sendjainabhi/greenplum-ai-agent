@@ -306,7 +306,28 @@ async function executeReset() {
     window.location.reload();
 }
 
-// --- Change PIN (inside settings) ---
+// --- Change PIN modal ---
+function openChangePinModal() {
+    closeSettings();
+    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const err = document.getElementById('changePinError');
+    if (err) { err.style.display = 'none'; err.className = 'test-result'; }
+    document.getElementById('changePinModal').style.display = 'flex';
+}
+
+function closeChangePinModal() {
+    document.getElementById('changePinModal').style.display = 'none';
+    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const err = document.getElementById('changePinError');
+    if (err) err.style.display = 'none';
+}
+
 async function changePin() {
     const current  = document.getElementById('changePinCurrent').value;
     const newPin   = document.getElementById('changePinNew').value;
@@ -366,11 +387,10 @@ async function changePin() {
     localStorage.setItem('gp_credential_hash', newHash);
     if (newHint) localStorage.setItem('gp_pin_hint', newHint);
 
-    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint']
-        .forEach(id => { document.getElementById(id).value = ''; });
-    errEl.className   = 'test-result test-success';
-    errEl.textContent = '✅ PIN updated successfully.';
+    errEl.className     = 'test-result test-success';
+    errEl.textContent   = '✅ PIN updated successfully.';
     errEl.style.display = 'block';
+    setTimeout(closeChangePinModal, 1500);
 }
 
 // =============================================================================
@@ -742,6 +762,7 @@ async function bootApp() {
     ]);
     initSessions();    // uses globals freshly populated from server
     loadFavourites();
+    updateModeBadge();
     autoConnect();
 }
 
@@ -1265,24 +1286,24 @@ function openSettings() {
     if (testResult) { testResult.style.display = 'none'; testResult.className = 'test-result'; testResult.textContent = ''; }
 
     const stored = safeParse('gp_config', { data: {} });
-    ['provider', 'baseUrl', 'apiKey', 'modelName', 'systemPrompt', 'mcpUrl', 'mcpAuth'].forEach(id => {
+    ['provider', 'baseUrl', 'apiKey', 'modelName', 'systemPrompt', 'mcpUrl', 'mcpAuth', 'omMcpUrl', 'omMcpAuth'].forEach(id => {
         if (document.getElementById(id) && stored.data[id] !== undefined) {
             document.getElementById(id).value = stored.data[id];
         }
     });
+
+    // Restore mode dropdown and wire change listener
+    const activeModeEl = document.getElementById('activeMode');
+    if (activeModeEl) activeModeEl.value = (stored.data && stored.data.activeMode) || 'greenplum';
+    attachModeListener();
+    toggleMcpFields();
+
     toggleProviderFields();
     document.getElementById('settingsModal').style.display = 'flex';
 }
 
 function closeSettings() {
     document.getElementById('settingsModal').style.display = 'none';
-    // Clear change-pin fields
-    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    const err = document.getElementById('changePinError');
-    if (err) err.style.display = 'none';
 }
 
 async function saveSettings() {
@@ -1293,10 +1314,12 @@ async function saveSettings() {
 
     try {
         const payload = { userId: CURRENT_USER_ID };
-        ['provider', 'baseUrl', 'apiKey', 'modelName', 'systemPrompt', 'mcpUrl', 'mcpAuth'].forEach(id => {
+        ['provider', 'baseUrl', 'apiKey', 'modelName', 'systemPrompt', 'mcpUrl', 'mcpAuth', 'omMcpUrl', 'omMcpAuth'].forEach(id => {
             const el = document.getElementById(id);
             if (el) payload[id] = el.value.trim();
         });
+        const activeModeEl = document.getElementById('activeMode');
+        payload.activeMode = activeModeEl ? activeModeEl.value : 'greenplum';
 
         // Write to browser localStorage
         const dataOnly = Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'userId'));
@@ -1309,6 +1332,7 @@ async function saveSettings() {
         if (!response.ok) throw new Error('Server rejected');
 
         closeSettings();
+        updateModeBadge();
         testConnection(false);
     } catch (error) {
         const testResult = document.getElementById('testResult');
@@ -1416,9 +1440,11 @@ async function testConnection(isFromModal = false) {
 
     let payload = {};
     if (isFromModal) {
-        ['provider', 'baseUrl', 'apiKey', 'modelName', 'mcpUrl', 'mcpAuth'].forEach(id => {
+        ['provider', 'baseUrl', 'apiKey', 'modelName', 'mcpUrl', 'mcpAuth', 'omMcpUrl', 'omMcpAuth'].forEach(id => {
             if (document.getElementById(id)) payload[id] = document.getElementById(id).value.trim();
         });
+        const activeModeEl2 = document.getElementById('activeMode');
+        payload.activeMode = activeModeEl2 ? activeModeEl2.value : 'greenplum';
         const testResult = document.getElementById('testResult');
         if (testResult) {
             testResult.style.display = 'block';
@@ -1454,17 +1480,26 @@ async function testConnection(isFromModal = false) {
                 const modelLine = document.createElement('div');
                 modelLine.textContent = (data.modelStatus === 'success' ? '✅' : '❌')
                     + ' AI Model: ' + (data.modelMessage || data.message || '');
-                if (data.modelStatus !== 'success') modelLine.style.color = '#dc2626';
+                modelLine.style.color = data.modelStatus === 'success' ? '#065f46' : '#991b1b';
                 testResult.appendChild(modelLine);
 
-                // MCP line (only when URL was provided)
+                // Greenplum MCP line
                 if (data.mcpStatus && data.mcpStatus !== 'skipped') {
                     const mcpLine = document.createElement('div');
                     mcpLine.style.marginTop = '6px';
                     mcpLine.textContent = (data.mcpStatus === 'success' ? '✅' : '❌')
-                        + ' MCP Server: ' + data.mcpMessage;
-                    if (data.mcpStatus !== 'success') mcpLine.style.color = '#dc2626';
+                        + ' Greenplum MCP: ' + data.mcpMessage;
+                    mcpLine.style.color = data.mcpStatus === 'success' ? '#065f46' : '#991b1b';
                     testResult.appendChild(mcpLine);
+                }
+                // OpenMetadata MCP line
+                if (data.omMcpStatus && data.omMcpStatus !== 'skipped') {
+                    const omLine = document.createElement('div');
+                    omLine.style.marginTop = '6px';
+                    omLine.textContent = (data.omMcpStatus === 'success' ? '✅' : '❌')
+                        + ' OpenMetadata MCP: ' + data.omMcpMessage;
+                    omLine.style.color = data.omMcpStatus === 'success' ? '#065f46' : '#991b1b';
+                    testResult.appendChild(omLine);
                 }
             }
         }
@@ -1473,8 +1508,9 @@ async function testConnection(isFromModal = false) {
         if (isFromModal) {
             const testResult = document.getElementById('testResult');
             if (testResult) {
-                testResult.className   = 'test-result test-error';
-                testResult.textContent = e.name === 'AbortError'
+                testResult.className        = 'test-result test-error';
+                testResult.style.display    = 'block';
+                testResult.textContent      = e.name === 'AbortError'
                     ? '❌ Request Timed Out. If using a Local Model, it might be loading into memory. Try again in a minute.'
                     : '❌ Connection Failed: Could not reach the backend server.';
             }
@@ -1486,6 +1522,37 @@ async function autoConnect() {
     const stored = safeParse('gp_config', { data: {} });
     if (stored && stored.data && stored.data.modelName) testConnection(false);
     else updateHeaderStatus('offline');
+}
+
+// =============================================================================
+// MCP SECTION TOGGLE + MODE BADGE
+// =============================================================================
+
+function toggleMcpFields() {
+    var sel = document.getElementById('activeMode');
+    var mode = sel ? sel.value : 'greenplum';
+    var gpSection = document.getElementById('gpMcpSection');
+    var omSection = document.getElementById('omMcpSection');
+    if (gpSection) gpSection.style.display = (mode === 'openmetadata') ? 'none' : 'block';
+    if (omSection) omSection.style.display = (mode === 'greenplum')    ? 'none' : 'block';
+}
+
+function attachModeListener() {
+    var sel = document.getElementById('activeMode');
+    if (sel) {
+        sel.removeEventListener('change', toggleMcpFields);
+        sel.addEventListener('change', toggleMcpFields);
+    }
+}
+
+function updateModeBadge() {
+    const stored = safeParse('gp_config', { data: {} });
+    const mode   = (stored.data && stored.data.activeMode) || 'greenplum';
+    const badge  = document.getElementById('headerModeBadge');
+    if (!badge) return;
+    const labels = { greenplum: 'Greenplum', openmetadata: 'OpenMetadata', both: 'GP + OM' };
+    badge.textContent = labels[mode] || 'Greenplum';
+    badge.style.display = 'inline';
 }
 
 // =============================================================================
@@ -1549,7 +1616,21 @@ function handleConfigUpload(event) {
         if (config.systemPrompt) document.getElementById('systemPrompt').value  = config.systemPrompt;
         if (config.mcpUrl)       document.getElementById('mcpUrl').value        = config.mcpUrl;
         if (config.mcpAuth)      document.getElementById('mcpAuth').value       = config.mcpAuth;
+        if (config.omMcpUrl)     document.getElementById('omMcpUrl').value      = config.omMcpUrl;
+        if (config.omMcpAuth)    document.getElementById('omMcpAuth').value     = config.omMcpAuth;
 
+        const activeModeEl = document.getElementById('activeMode');
+        if (activeModeEl) {
+            if (config.activeMode) {
+                activeModeEl.value = config.activeMode;
+            } else {
+                // Auto-infer from which MCP URLs are present
+                if (config.mcpUrl && config.omMcpUrl)   activeModeEl.value = 'both';
+                else if (config.omMcpUrl)                activeModeEl.value = 'openmetadata';
+                else                                     activeModeEl.value = 'greenplum';
+            }
+        }
+        toggleMcpFields();
         toggleProviderFields();
         const testResult = document.getElementById('testResult');
         if (testResult) {
