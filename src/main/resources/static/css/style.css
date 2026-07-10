@@ -262,3 +262,44 @@ tr:nth-child(even) { background-color: var(--table-row-alt); }
 
 /* Table cell text (td has no class, relies on inheritance from table) */
 [data-theme="dark"] td { color: var(--text-color); }
+
+/* ---- Settings modal: two-panel side-by-side layout ---- */
+#settingsModal .modal-content {
+    max-width: 900px;
+}
+.settings-panels {
+    display: flex;
+    align-items: flex-start;
+}
+.settings-panel {
+    flex: 1;
+    min-width: 0;
+    padding-right: 24px;
+}
+.settings-panel:last-child {
+    padding-right: 0;
+    padding-left: 24px;
+    border-left: 1px solid var(--border-subtle);
+}
+.settings-panel-title {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: var(--primary-color);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+@media (max-width: 620px) {
+    #settingsModal .modal-content { max-width: 98vw; }
+    .settings-panels { flex-direction: column; }
+    .settings-panel { padding-right: 0; }
+    .settings-panel:last-child {
+        padding-left: 0;
+        border-left: none;
+        border-top: 1px solid var(--border-subtle);
+        padding-top: 16px;
+        margin-top: 8px;
+    }
+}

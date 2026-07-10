@@ -268,108 +268,126 @@
 
 <!-- ===================== SETTINGS ===================== -->
 <div class="modal-overlay" id="settingsModal" style="display: none;">
-    <div class="modal-content">
-        <h3>Agent Configuration (Global)</h3>
+    <div class="modal-content" style="display:flex; flex-direction:column; padding:0; overflow:hidden; max-height:90vh;">
 
-        <div class="form-group" style="background: var(--sidebar-bg); padding: 15px; border-radius: 6px; border: 1px dashed var(--border-subtle); margin-bottom: 15px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <label style="color: var(--primary-color); font-size: 0.95em; margin-bottom:0;">📤 Upload Config File</label>
-                <a href="/sample-credential.txt" download="sample-credential.txt"
-                   style="font-size:0.78em; color:var(--primary-color); text-decoration:none; border:1px solid var(--border-subtle); border-radius:4px; padding:2px 8px; background:var(--new-chat-btn-hover);">
-                    ⬇ Download Sample
+        <!-- Sticky header -->
+        <div style="padding:20px 25px 14px; border-bottom:1px solid var(--border-color); flex-shrink:0;">
+            <h3 style="margin:0 0 14px; border-bottom:none; padding-bottom:0;">Agent Configuration (Global)</h3>
+            <div style="background:var(--sidebar-bg); padding:12px 14px; border-radius:6px; border:1px dashed var(--border-subtle);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <label style="color:var(--primary-color); font-size:0.95em; margin-bottom:0;">📤 Upload Config File</label>
+                    <a href="/sample-credential.txt" download="sample-credential.txt"
+                       style="font-size:0.78em; color:var(--primary-color); text-decoration:none; border:1px solid var(--border-subtle); border-radius:4px; padding:2px 8px; background:var(--new-chat-btn-hover);">
+                        ⬇ Download Sample
+                    </a>
+                </div>
+                <input type="file" id="configFileUpload" accept=".properties,.txt" onchange="handleConfigUpload(event)" style="border:none; padding:5px 0; background:transparent;">
+            </div>
+        </div>
+
+        <!-- Scrollable body -->
+        <div style="flex:1; overflow-y:auto; padding:18px 25px 14px;">
+          <div class="settings-panels">
+
+            <!-- LEFT PANEL: AI Model settings -->
+            <div class="settings-panel">
+                <div class="settings-panel-title">🤖 AI Model</div>
+
+                <div class="form-group">
+                    <label>Provider Engine</label>
+                    <select id="provider" onchange="toggleProviderFields()">
+                        <option value="ollama" selected>Ollama</option>
+                        <option value="openai">OpenAI Compatible (ChatGPT, vLLM, LMStudio)</option>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Model Name</label>
+                    <input type="text" id="modelName" placeholder="e.g. qwen2.5:32b">
+                    <div id="modelNameHelp" style="font-size:0.8em; color:#64748b; margin-top:-5px;">Select a provider to see format</div>
+                </div>
+
+                <div class="form-group" id="baseUrlGroup">
+                    <label id="baseUrlLabel">Endpoint / Base URL</label>
+                    <input type="text" id="baseUrl">
+                    <div id="baseUrlHelp" style="font-size:0.8em; color:#64748b; margin-top:-5px;"></div>
+                </div>
+
+                <div class="form-group" id="apiKeyGroup">
+                    <label>API Key / Auth</label>
+                    <input type="password" id="apiKey">
+                    <div id="apiKeyHelp" style="font-size:0.8em; color:#64748b; margin-top:-5px;"></div>
+                </div>
+
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>System Prompt <span style="font-weight:normal; color:#94a3b8;">(Pre-training)</span></label>
+                    <textarea id="systemPrompt" rows="5" placeholder="e.g., You are a strict PostgreSQL DBA. Explain queries clearly." style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9em; resize:vertical;"></textarea>
+                    <div style="font-size:0.8em; color:#64748b; margin-top:-5px;">Applied dynamically to all conversations.</div>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: Data Platform settings -->
+            <div class="settings-panel">
+                <div class="settings-panel-title">🗄️ Data Platform</div>
+
+                <div class="form-group">
+                    <label>Mode</label>
+                    <select id="activeMode">
+                        <option value="greenplum">Greenplum</option>
+                        <option value="openmetadata">OpenMetadata</option>
+                        <option value="both">Both (Greenplum + OpenMetadata)</option>
+                    </select>
+                    <div style="font-size:0.8em; color:#64748b; margin-top:-5px;">Which MCP server(s) the agent connects to.</div>
+                </div>
+
+                <!-- Greenplum MCP (visible when mode = greenplum or both) -->
+                <div id="gpMcpSection" style="display:block; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
+                    <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">🐘 Greenplum MCP</div>
+                    <div class="form-group">
+                        <label>Server URL</label>
+                        <input type="text" id="mcpUrl" placeholder="http://xx.xx.xx.xx:80/mcp">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label>Auth Header</label>
+                        <input type="password" id="mcpAuth" placeholder="Basic &lt;base64&gt;">
+                    </div>
+                </div>
+
+                <!-- OpenMetadata MCP (visible when mode = openmetadata or both) -->
+                <div id="omMcpSection" style="display:none; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
+                    <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">📂 OpenMetadata MCP</div>
+                    <div class="form-group">
+                        <label>Server URL</label>
+                        <input type="text" id="omMcpUrl" placeholder="http://xx.xx.xx.xx:8585/mcp">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label>Auth Header</label>
+                        <input type="password" id="omMcpAuth" placeholder="Bearer &lt;jwt-token&gt; or Basic &lt;base64&gt;">
+                    </div>
+                </div>
+
+                <div id="testResult" class="test-result" style="margin-top:4px;"></div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Sticky footer -->
+        <div style="padding:14px 25px 16px; border-top:1px solid var(--border-color); flex-shrink:0; background:var(--modal-bg);">
+            <div class="modal-actions" style="margin-top:0;">
+                <button type="button" class="btn-test" id="testBtn" onclick="testConnection(true)">Test Connection</button>
+                <button type="button" class="btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button type="button" class="btn-save" onclick="saveSettings()">Save Settings</button>
+            </div>
+            <div style="text-align:center; margin-top:12px;">
+                <a href="#" onclick="openChangePinModal(); return false;"
+                   style="color:#6366f1; font-size:0.875em; font-weight:500; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                    🔒 Change PIN
                 </a>
             </div>
-            <input type="file" id="configFileUpload" accept=".properties,.txt" onchange="handleConfigUpload(event)" style="border: none; padding: 5px 0; background: transparent;">
         </div>
 
-        <div class="form-group">
-            <label>AI Provider Engine</label>
-            <select id="provider" onchange="toggleProviderFields()">
-                <option value="ollama" selected>Ollama</option>
-                <option value="openai">OpenAI Compatible (ChatGPT, vLLM, LMStudio)</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-        </div>
-
-        <div class="form-group" id="baseUrlGroup">
-            <label id="baseUrlLabel">Endpoint / Base URL</label>
-            <input type="text" id="baseUrl">
-            <div id="baseUrlHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;"></div>
-        </div>
-
-        <div class="form-group" id="apiKeyGroup">
-            <label>Authentication / API Key</label>
-            <input type="password" id="apiKey">
-            <div id="apiKeyHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;"></div>
-        </div>
-
-        <div class="form-group">
-            <label>Model Name</label>
-            <input type="text" id="modelName" placeholder="e.g. qwen2.5:32b">
-            <div id="modelNameHelp" style="font-size: 0.8em; color: #64748b; margin-top: -5px;">Select a provider to see format</div>
-        </div>
-
-        <div class="form-group">
-            <label>Custom System Prompt (Pre-training)</label>
-            <textarea id="systemPrompt" rows="3" placeholder="e.g., You are a strict PostgreSQL DBA. Explain queries clearly." style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; font-size: 0.9em; resize: vertical;"></textarea>
-            <div style="font-size: 0.8em; color: #64748b; margin-top: -5px;">These instructions are applied dynamically to all conversations.</div>
-        </div>
-
-        <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-
-        <!-- Data Platform Mode selector -->
-        <div class="form-group">
-            <label>Data Platform Mode</label>
-            <select id="activeMode">
-                <option value="greenplum">Greenplum</option>
-                <option value="openmetadata">OpenMetadata</option>
-                <option value="both">Both (Greenplum + OpenMetadata)</option>
-            </select>
-            <div style="font-size:0.8em; color:#64748b; margin-top:-5px;">Selects which MCP server(s) the agent connects to.</div>
-        </div>
-
-        <!-- Greenplum MCP (visible when mode = greenplum or both) -->
-        <div id="gpMcpSection" style="display:block; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
-            <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">🐘 Greenplum MCP</div>
-            <div class="form-group">
-                <label>Server URL</label>
-                <input type="text" id="mcpUrl" placeholder="http://xx.xx.xx.xx:80/mcp">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Auth Header</label>
-                <input type="password" id="mcpAuth" placeholder="Basic &lt;base64&gt;">
-            </div>
-        </div>
-
-        <!-- OpenMetadata MCP (visible when mode = openmetadata or both) -->
-        <div id="omMcpSection" style="display:none; background:var(--sidebar-bg); border:1px solid var(--border-subtle); border-radius:6px; padding:14px 15px; margin-bottom:12px;">
-            <div style="font-size:0.8em; font-weight:700; color:var(--primary-color); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.06em;">📂 OpenMetadata MCP</div>
-            <div class="form-group">
-                <label>Server URL</label>
-                <input type="text" id="omMcpUrl" placeholder="http://xx.xx.xx.xx:8585/mcp">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Auth Header</label>
-                <input type="password" id="omMcpAuth" placeholder="Bearer &lt;jwt-token&gt; or Basic &lt;base64&gt;">
-            </div>
-        </div>
-
-        <div id="testResult" class="test-result"></div>
-
-        <div class="modal-actions">
-            <button type="button" class="btn-test" id="testBtn" onclick="testConnection(true)">Test Connection</button>
-            <button type="button" class="btn-cancel" onclick="closeSettings()">Cancel</button>
-            <button type="button" class="btn-save" onclick="saveSettings()">Save Settings</button>
-        </div>
-
-        <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-
-        <div style="text-align:center;">
-            <a href="#" onclick="openChangePinModal(); return false;"
-               style="color:#6366f1; font-size:0.875em; font-weight:500; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
-                🔒 Change PIN
-            </a>
-        </div>
     </div>
 </div>
 
@@ -404,6 +422,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=38"></script>
+<script src="/js/app.js?v=39"></script>
 </body>
 </html>
