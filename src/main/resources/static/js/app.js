@@ -74,6 +74,7 @@ function toggleTheme() {
 // =============================================================================
 
 let CURRENT_USER_ID = localStorage.getItem('gp_user_id') || null;
+let CF_MODE = false; // set true when VCAP_SERVICES bindings detected — hides Settings + PIN
 
 // =============================================================================
 // PIN  (SHA-256 via Web Crypto; hash stored in browser AND on server)
@@ -625,6 +626,19 @@ window.onload = async function () {
         // Always check server filesystem first — works in incognito & after cache clear
         const status = await fetchAuthStatus();
 
+        // CF mode: VCAP_SERVICES bindings detected — configure UI from platform services.
+        // PIN login is still required for per-user chat isolation.
+        if (status.cfMode) {
+            CF_MODE = true;
+            CF_MODEL_LABEL = status.model || '';
+            CF_MCP_SERVERS = status.mcpServers || [];
+            // Hide Settings immediately — model/MCP config comes from platform bindings
+            const settingsBtn = document.getElementById('settingsBtn');
+            if (settingsBtn) settingsBtn.style.display = 'none';
+            // Build MCP service dots in the header now so they're visible during login
+            buildMcpDots();
+        }
+
         if (!status.registered) {
             // No PIN on server yet — show create account (username + PIN, one time only)
             showPinSetup();
@@ -653,6 +667,66 @@ window.onload = async function () {
         showPinEntry();
     }
 };
+
+// CF info stored at boot
+let CF_MODEL_LABEL = '';
+let CF_MCP_SERVERS = []; // ["Greenplum"], ["OpenMetadata"], or ["Greenplum","OpenMetadata"]
+
+// Build MCP service dots in the header using the globally set CF_MCP_SERVERS.
+// Safe to call multiple times — clears and rebuilds each time.
+function buildMcpDots() {
+    const toShow = ['Greenplum'];
+    if (CF_MCP_SERVERS.includes('OpenMetadata')) toShow.push('OpenMetadata');
+
+    const container = document.getElementById('mcpStatusContainer');
+    if (!container) return;
+    container.innerHTML = '';
+    toShow.forEach(name => {
+        const sep = document.createElement('span');
+        sep.style.cssText = 'display:inline-flex;align-items:center;gap:5px;' +
+            'border-left:1px solid rgba(255,255,255,0.15);padding-left:10px;margin-left:6px;';
+        sep.innerHTML = `<span id="mcp-dot-${name}" class="status-dot status-unknown"></span>` +
+                        `<span>${name}</span>`;
+        container.appendChild(sep);
+    });
+}
+
+function applyCfMode(status) {
+    if (status) {
+        CF_MCP_SERVERS = status.mcpServers || CF_MCP_SERVERS;
+        CF_MODEL_LABEL = status.model || CF_MODEL_LABEL;
+    }
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) settingsBtn.style.display = 'none';
+    // Expose Change PIN directly in the header (Settings is hidden in CF mode)
+    const changePinBtn = document.getElementById('changePinBtn');
+    if (changePinBtn) changePinBtn.style.display = '';
+    buildMcpDots();
+}
+
+/**
+ * After /api/test/cf completes, color model dot + each MCP server dot.
+ *   green  = connected
+ *   red    = failed / not configured
+ */
+function buildCfStatusLabel(data) {
+    const modelOk = data.modelStatus === 'success';
+
+    // Model dot + name
+    const modelDot  = document.getElementById('headerStatusDot');
+    const modelText = document.getElementById('headerStatusText');
+    if (modelDot)  modelDot.className = 'status-dot ' + (modelOk ? 'status-online' : 'status-offline');
+    if (modelText) modelText.textContent = CF_MODEL_LABEL || 'Model';
+
+    // MCP dots — Greenplum always shown, OpenMetadata if bound
+    const statusByServer = { 'Greenplum': data.mcpStatus, 'OpenMetadata': data.omMcpStatus };
+    ['Greenplum', 'OpenMetadata'].forEach(name => {
+        const dot = document.getElementById('mcp-dot-' + name);
+        if (!dot) return;
+        const ok = statusByServer[name] === 'success';
+        dot.className = 'status-dot ' + (ok ? 'status-online' : 'status-offline');
+    });
+}
 
 function configureMarked() {
     marked.use({ breaks: true, gfm: true });
@@ -763,6 +837,9 @@ async function bootApp() {
     initSessions();    // uses globals freshly populated from server
     loadFavourites();
     updateModeBadge();
+    // Show Change PIN in header for all logged-in users
+    const changePinBtn = document.getElementById('changePinBtn');
+    if (changePinBtn) changePinBtn.style.display = '';
     autoConnect();
 }
 
@@ -1421,7 +1498,8 @@ function clearAllLocalData(includingPin) {
 // CONNECTION TEST & AUTO-CONNECT
 // =============================================================================
 
-function updateHeaderStatus(state) {
+// customLabel may contain HTML (e.g. <span class="svc-err">Greenplum</span>)
+function updateHeaderStatus(state, customLabel) {
     const dot  = document.getElementById('headerStatusDot');
     const text = document.getElementById('headerStatusText');
     if (!dot || !text) return;
@@ -1429,10 +1507,17 @@ function updateHeaderStatus(state) {
         'testing': ['status-testing', 'Testing...'],
         'running': ['status-testing', 'Running...'],
         'online':  ['status-online',  'Connected'],
+        'partial': ['status-partial', 'Partial'],
         'offline': ['status-offline', 'Disconnected']
     };
-    dot.className   = 'status-dot ' + (states[state]?.[0] || 'status-unknown');
-    text.textContent = states[state]?.[1] || 'Disconnected';
+    dot.className = 'status-dot ' + (states[state]?.[0] || 'status-unknown');
+    const label = customLabel || states[state]?.[1] || 'Disconnected';
+    // Use innerHTML only when the label contains HTML markup
+    if (label.includes('<')) {
+        text.innerHTML = label;
+    } else {
+        text.textContent = label;
+    }
 }
 
 async function testConnection(isFromModal = false) {
@@ -1518,7 +1603,31 @@ async function testConnection(isFromModal = false) {
     }
 }
 
+function setCfDotsState(state) {
+    const cls = { testing: 'status-testing', online: 'status-online', offline: 'status-offline' }[state] || 'status-unknown';
+    const modelDot = document.getElementById('headerStatusDot');
+    if (modelDot) modelDot.className = 'status-dot ' + cls;
+    ['Greenplum', 'OpenMetadata'].forEach(name => {
+        const dot = document.getElementById('mcp-dot-' + name);
+        if (dot) dot.className = 'status-dot ' + cls;
+    });
+}
+
 async function autoConnect() {
+    if (CF_MODE) {
+        try {
+            setCfDotsState('testing');
+            const res  = await fetch('/api/test/cf');
+            const data = await res.json();
+            buildCfStatusLabel(data);
+        } catch (e) {
+            setCfDotsState('offline');
+            // Still show model name (or "Model") even when unreachable
+            const modelText = document.getElementById('headerStatusText');
+            if (modelText) modelText.textContent = CF_MODEL_LABEL || 'Model';
+        }
+        return;
+    }
     const stored = safeParse('gp_config', { data: {} });
     if (stored && stored.data && stored.data.modelName) testConnection(false);
     else updateHeaderStatus('offline');
@@ -1546,6 +1655,8 @@ function attachModeListener() {
 }
 
 function updateModeBadge() {
+    // In CF mode the MCP dot indicators replace this badge
+    if (CF_MODE) return;
     const stored = safeParse('gp_config', { data: {} });
     const mode   = (stored.data && stored.data.activeMode) || 'greenplum';
     const badge  = document.getElementById('headerModeBadge');

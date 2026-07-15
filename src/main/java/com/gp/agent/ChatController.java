@@ -35,6 +35,7 @@ public class ChatController {
     private static final int MAX_PROMPT_LENGTH = 4000;
 
     private final ChatMemoryProvider memoryProvider;
+    private final VcapServicesConfig vcapConfig;
 
     // Agent cache — keyed by userId, rebuilt only when config changes.
     // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
@@ -50,8 +51,9 @@ public class ChatController {
     // No in-memory cache for global prompt — always read from disk so updates
     // apply immediately to every user and session without any restart.
 
-    public ChatController(ChatMemoryProvider memoryProvider) {
+    public ChatController(ChatMemoryProvider memoryProvider, VcapServicesConfig vcapConfig) {
         this.memoryProvider = memoryProvider;
+        this.vcapConfig     = vcapConfig;
     }
 
     @PostConstruct
@@ -133,33 +135,66 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
+    // Deployment mode — tells the frontend whether CF service bindings are active
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/deployment-mode")
+    ResponseEntity<Map<String, Object>> deploymentMode() {
+        if (vcapConfig.isCfMode()) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("mode",       "cf");
+            result.put("model",      vcapConfig.getModelSummary());
+            result.put("mcpServers", vcapConfig.getMcpServerNames());
+            return ResponseEntity.ok(result);
+        }
+        return ResponseEntity.ok(Map.of("mode", "manual"));
+    }
+
+    // -------------------------------------------------------------------------
     // Auth status — check server filesystem for any registered user
     // -------------------------------------------------------------------------
 
     @GetMapping("/auth/status")
     ResponseEntity<Map<String, Object>> authStatus() {
+        Map<String, Object> response = new LinkedHashMap<>();
+
+        // CF mode: include model/MCP info so the UI can configure itself,
+        // but still run the normal PIN flow for per-user chat isolation.
+        if (vcapConfig.isCfMode()) {
+            response.put("cfMode",     true);
+            response.put("model",      vcapConfig.getModelSummary());
+            response.put("mcpServers", vcapConfig.getMcpServerNames());
+        }
+
         try {
             File usersDir = new File(GreenplumAgentApplication.resolveDataDir()
                     + File.separator + "users");
             if (!usersDir.exists()) {
-                return ResponseEntity.ok(Map.of("registered", false));
+                response.put("registered", false);
+                return ResponseEntity.ok(response);
             }
             File[] userDirs = usersDir.listFiles(File::isDirectory);
             if (userDirs == null || userDirs.length == 0) {
-                return ResponseEntity.ok(Map.of("registered", false));
+                response.put("registered", false);
+                return ResponseEntity.ok(response);
             }
             java.util.Arrays.sort(userDirs, (a, b) -> a.getName().compareTo(b.getName()));
             for (File userDir : userDirs) {
+                if ("cf-system".equals(userDir.getName())) continue;
                 Map<String, String> config = loadOrSeedConfig(userDir.getName(), null);
                 if (!config.getOrDefault("pinHash", "").isEmpty()) {
                     log.debug("[AUTH] Status: user {} is registered", userDir.getName());
-                    return ResponseEntity.ok(Map.of("registered", true, "userId", userDir.getName()));
+                    response.put("registered", true);
+                    response.put("userId", userDir.getName());
+                    return ResponseEntity.ok(response);
                 }
             }
-            return ResponseEntity.ok(Map.of("registered", false));
+            response.put("registered", false);
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("[AUTH] Status check failed: {}", e.getMessage());
-            return ResponseEntity.ok(Map.of("registered", false));
+            response.put("registered", false);
+            return ResponseEntity.ok(response);
         }
     }
 
@@ -242,6 +277,14 @@ public class ChatController {
         @SuppressWarnings("unchecked")
         Map<String, String> reqConfig = (Map<String, String>) request.get("config");
         Map<String, String> config = loadOrSeedConfig(userId, reqConfig);
+
+        // CF mode: fill in any missing fields from VCAP-bound credentials
+        if (vcapConfig.isCfMode()) {
+            if (config.getOrDefault("modelName", "").trim().isEmpty()) {
+                config.putAll(vcapConfig.getModelConfig());
+            }
+            vcapConfig.getMcpConfig().forEach(config::putIfAbsent);
+        }
 
         String modelName = config.getOrDefault("modelName", "").trim();
         if (modelName.isEmpty()) {
@@ -375,6 +418,69 @@ public class ChatController {
         result.put("omMcpStatus",  omMcpStatus);
         result.put("omMcpMessage", omMcpMessage);
         log.info("[TEST] model={} gp-mcp={} om-mcp={} mode={}", modelStatus, mcpStatus, omMcpStatus, activeMode);
+        return ResponseEntity.ok(result);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test CF-bound connectivity (uses VCAP credentials, no request body needed)
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/test/cf")
+    ResponseEntity<Map<String, Object>> testCfConnection() {
+        if (!vcapConfig.isCfMode()) {
+            return ResponseEntity.ok(Map.of("status", "error",
+                    "message", "Not running in CF mode — no VCAP_SERVICES bound"));
+        }
+        Map<String, String> model = vcapConfig.getModelConfig();
+        Map<String, String> mcp   = vcapConfig.getMcpConfig();
+
+        String provider   = model.getOrDefault("provider",   "openai");
+        String modelName  = model.getOrDefault("modelName",  "");
+        String apiKey     = model.getOrDefault("apiKey",     "");
+        String baseUrl    = model.getOrDefault("baseUrl",    "");
+        String mcpUrl     = mcp.getOrDefault("mcpUrl",     "");
+        String mcpAuth    = mcp.getOrDefault("mcpAuth",    "");
+        String activeMode = mcp.getOrDefault("activeMode", "greenplum");
+        String omMcpUrl   = mcp.getOrDefault("omMcpUrl",   "");
+        String omMcpAuth  = mcp.getOrDefault("omMcpAuth",  "");
+
+        String modelStatus, modelMessage;
+        try {
+            ChatLanguageModel m = buildModel(provider, modelName, apiKey, baseUrl, 90);
+            String resp  = m.generate("Respond with the exact word: OK");
+            modelStatus  = "success";
+            modelMessage = "Connected — " + resp.trim();
+        } catch (Exception e) {
+            modelStatus  = "error";
+            modelMessage = e.getMessage();
+        }
+
+        String mcpStatus = "skipped", mcpMessage = "";
+        if (!"openmetadata".equals(activeMode)) {
+            Map<String, String> r = GreenplumMcpTools.testConnection(mcpUrl, mcpAuth);
+            mcpStatus  = r.get("status");
+            mcpMessage = r.get("message");
+        }
+        String omMcpStatus = "skipped", omMcpMessage = "";
+        if (!"greenplum".equals(activeMode)) {
+            Map<String, String> r = OpenMetadataMcpTools.testConnection(omMcpUrl, omMcpAuth);
+            omMcpStatus  = r.get("status");
+            omMcpMessage = r.get("message");
+        }
+
+        boolean allOk = "success".equals(modelStatus)
+                && ("success".equals(mcpStatus)   || "skipped".equals(mcpStatus))
+                && ("success".equals(omMcpStatus) || "skipped".equals(omMcpStatus));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status",       allOk ? "success" : "error");
+        result.put("modelStatus",  modelStatus);
+        result.put("modelMessage", modelMessage);
+        result.put("mcpStatus",    mcpStatus);
+        result.put("mcpMessage",   mcpMessage);
+        result.put("omMcpStatus",  omMcpStatus);
+        result.put("omMcpMessage", omMcpMessage);
+        log.info("[CF-TEST] model={} gp-mcp={} om-mcp={}", modelStatus, mcpStatus, omMcpStatus);
         return ResponseEntity.ok(result);
     }
 

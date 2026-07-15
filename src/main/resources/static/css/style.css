@@ -122,10 +122,12 @@ body { font-family: system-ui, -apple-system, sans-serif; background-color: var(
 
 .status-container { display: flex; align-items: center; gap: 10px; font-size: 0.75em; font-weight: normal; background: rgba(0,0,0,0.15); padding: 4px 10px; border-radius: 20px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; transition: background-color 0.3s; }
-.status-online { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+.status-online  { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
 .status-offline { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
+.status-partial { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 .status-testing { background-color: #f59e0b; animation: pulse 1.5s infinite; }
 .status-unknown { background-color: #9ca3af; }
+.svc-err { color: #ef4444; font-weight: 600; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
 
 .messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }

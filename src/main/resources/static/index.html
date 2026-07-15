@@ -38,6 +38,7 @@
                 <div class="status-container">
                     <span id="headerStatusDot" class="status-dot status-unknown"></span>
                     <span id="headerStatusText">Disconnected</span>
+                    <span id="mcpStatusContainer"></span>
                     <span id="headerModeBadge" style="display:none; font-size:0.72em; padding:2px 9px; border-radius:10px; background:var(--border-subtle); color:var(--muted-text); margin-left:8px; font-weight:500; letter-spacing:0.02em;"></span>
                 </div>
             </div>
@@ -45,6 +46,7 @@
                 <button class="settings-btn" id="themeToggleBtn" onclick="toggleTheme()">🌙 Dark Mode</button>
                 <button class="settings-btn" onclick="deleteAllData()" style="background: transparent;">🗑️ Clear All Data</button>
                 <button class="settings-btn" onclick="openAdminModal()" style="background: transparent;">🔐 Admin Panel</button>
+                <button class="settings-btn" id="changePinBtn" onclick="openChangePinModal()" style="background: transparent; display:none;">🔒 Change PIN</button>
                 <button class="settings-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
             </div>
         </div>
@@ -422,6 +424,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=39"></script>
+<script src="/js/app.js?v=49"></script>
 </body>
 </html>
