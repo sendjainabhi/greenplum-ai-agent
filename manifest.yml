@@ -1,6 +1,6 @@
 ---
 applications:
-- name: greenplum-ai-agent
+- name: gp-ai-agent
   path: greenplum-ai-agent-1.0.0.jar  # Update this to match your exact .jar file location
   memory: 2G
   instances: 1
