@@ -594,6 +594,8 @@ function buildCfStatusLabel(data) {
     const modelText = document.getElementById('headerStatusText');
     if (modelDot)  modelDot.className = 'status-dot ' + (modelOk ? 'status-online' : 'status-offline');
     if (modelText) modelText.textContent = CF_MODEL_LABEL || 'Model';
+    const modelIndicator = document.getElementById('modelIndicator');
+    if (modelIndicator) modelIndicator.dataset.tip = CF_MODEL_LABEL || 'Model';
 
     // MCP dots — Greenplum always shown, OpenMetadata if bound
     const statusByServer = { 'Greenplum': data.mcpStatus, 'OpenMetadata': data.omMcpStatus };
@@ -1494,6 +1496,8 @@ async function autoConnect() {
             // Still show model name (or "Model") even when unreachable
             const modelText = document.getElementById('headerStatusText');
             if (modelText) modelText.textContent = CF_MODEL_LABEL || 'Model';
+            const modelIndicator = document.getElementById('modelIndicator');
+            if (modelIndicator) modelIndicator.dataset.tip = CF_MODEL_LABEL || 'Model';
         }
         return;
     }

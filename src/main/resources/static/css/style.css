@@ -125,6 +125,10 @@ body { font-family: system-ui, -apple-system, sans-serif; background-color: var(
 .hdr-btn::after { content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); background: rgba(15,30,20,0.92); color: #e2fce8; font-size: 0.68em; font-weight: 500; white-space: nowrap; padding: 3px 8px; border-radius: 4px; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 9999; }
 .hdr-btn::before { content: ''; position: absolute; top: calc(100% + 2px); left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-bottom-color: rgba(15,30,20,0.92); pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 9999; }
 .hdr-btn:hover::after, .hdr-btn:hover::before { opacity: 1; }
+.model-indicator { position: relative; display: flex; align-items: center; gap: 6px; cursor: default; }
+.model-indicator::after { content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); background: rgba(15,30,20,0.92); color: #e2fce8; font-size: 0.68em; font-weight: 500; white-space: nowrap; padding: 3px 8px; border-radius: 4px; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 9999; }
+.model-indicator::before { content: ''; position: absolute; top: calc(100% + 2px); left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-bottom-color: rgba(15,30,20,0.92); pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 9999; }
+.model-indicator:hover::after, .model-indicator:hover::before { opacity: 1; }
 
 /* User initials circle — same border style as buttons */
 .hdr-user { display: flex; align-items: center; gap: 0; margin-right: 2px; }
