@@ -1,7 +1,7 @@
 ---
 applications:
 - name: greenplum-ai-agent
-  path: greenplum-ai-agent-1.0.0.jar  # Update this to match your exact .jar file location
+  path: target/greenplum-ai-agent-1.0.0.jar
   memory: 2G
   instances: 1
   buildpacks:
@@ -9,40 +9,14 @@ applications:
   env:
     JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
     SPRING_PROFILES_ACTIVE: cloud
-    # Admin PIN for the Global Pre-Training Prompt feature (🔐 Admin button in the UI).
-    # Set this to a strong secret value before deploying. Do not commit the actual value to git.
+    # Admin PIN for the Global Pre-Training Prompt / Allowlist admin panel.
+    # Set this to a strong secret before deploying. Do not commit the actual value.
     ADMIN_PIN: tanzuadmin
-    # Uncomment and set the line below only when an NFS volume service is bound.
-    # Without this, user configs and chat memory are stored in the container's ephemeral
-    # home directory and re-seeded from the browser on each container restart.
-    # AGENT_DATA_DIR: /mnt/greenplum-data
+    # Block storage mount point — all user data, chat history, and allowlist persisted here.
+    AGENT_DATA_DIR: /mnt/gp-data
 
-  # ---------------------------------------------------------------------------
-  # CF Service Bindings (optional — activates zero-config CF mode)
-  #
-  # When these services are bound, the app automatically:
-  #   - Hides the ⚙️ Settings button and PIN login from the UI
-  #   - Reads AI model and MCP credentials from VCAP_SERVICES
-  #   - Users open the URL and chat immediately with no configuration needed
-  #
-  # Create services once (ops team, run before cf push):
-  #
-  #   cf create-user-provided-service gp-ai-model \
-  #     -p '{"provider":"openai","baseUrl":"http://vllm.internal/v1","apiKey":"sk-...","modelName":"qwen2.5:32b"}'
-  #
-  #   cf create-user-provided-service gp-mcp-greenplum \
-  #     -p '{"type":"greenplum","url":"http://gp-mcp.internal/mcp","auth":"Basic <base64>"}'
-  #
-  #   cf create-user-provided-service gp-mcp-openmetadata \
-  #     -p '{"type":"openmetadata","url":"http://om-mcp.internal/mcp","auth":"Bearer <jwt>"}'
-  #
-  # Then either uncomment the services block below OR bind manually:
-  #   cf bind-service greenplum-ai-agent gp-ai-model
-  #   cf bind-service greenplum-ai-agent gp-mcp-greenplum
-  #   cf bind-service greenplum-ai-agent gp-mcp-openmetadata
-  #   cf restage greenplum-ai-agent
-  #
-  # services:
-  #   - gp-ai-model          # required for CF mode
-  #   - gp-mcp-greenplum     # bind for Greenplum or both mode
-  #   - gp-mcp-openmetadata  # bind for OpenMetadata or both mode
+  services:
+    - gmd-authhub-sso          # Tanzu SSO / Broadcom AuthHub (p-identity plan: tanzu-authhub)
+    - greenplum-agent-storage  # Block storage volume (1024 MB) mounted at /mnt/gp-data
+    - gmd-ai-prod-svc          # Tanzu GenAI AI model service
+    - gp-mcp-greenplum         # Greenplum MCP server (gp-mcp-server.apps.tanzu.broadcom.net)

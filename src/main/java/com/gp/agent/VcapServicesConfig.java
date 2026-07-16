@@ -78,6 +78,8 @@ public class VcapServicesConfig {
             log.info("[CF] VCAP_SERVICES not present or empty — running in manual mode");
             return;
         }
+        // We are on CF — settings UI must be hidden regardless of what services are bound
+        cfMode = true;
 
         try {
             Map<String, List<Map<String, Object>>> services =
@@ -106,8 +108,7 @@ public class VcapServicesConfig {
                 if (mcpConfig.getOrDefault("omMcpUrl", "").isEmpty()) resolveOmMcpFromSpringEnv(svcName);
             }
 
-            cfMode = !modelConfig.isEmpty();
-            if (cfMode) {
+            if (!modelConfig.isEmpty()) {
                 // Auto-discover model name if not present in credentials
                 if (modelConfig.getOrDefault("modelName", "").isEmpty()
                         && !modelConfig.getOrDefault("baseUrl", "").isEmpty()) {

@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.File;
@@ -71,70 +73,6 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
-    // PIN auth — setup (save hash) and verify (recover after cache clear)
-    // -------------------------------------------------------------------------
-
-    @PostMapping("/auth/setup")
-    ResponseEntity<Map<String, Object>> authSetup(@RequestBody Map<String, String> request) {
-        String userId  = request.getOrDefault("userId",  "").trim();
-        String pinHash = request.getOrDefault("pinHash", "").trim();
-        String pinHint = request.getOrDefault("pinHint", "").trim();
-
-        if (userId.isEmpty() || !userId.matches("[a-zA-Z0-9_-]{3,50}")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false,
-                    "error", "Username must be 3–50 characters (letters, numbers, - or _)."));
-        }
-        if (pinHash.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "PIN hash required."));
-        }
-        try {
-            File configFile = getConfigFile(userId);
-            Map<String, String> config = configFile.exists()
-                    ? loadOrSeedConfig(userId, null) : new LinkedHashMap<>();
-            config.put("pinHash", pinHash);
-            if (!pinHint.isEmpty()) config.put("pinHint", pinHint);
-            Files.writeString(configFile.toPath(),
-                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(config),
-                    StandardCharsets.UTF_8);
-            log.info("[AUTH] PIN saved for user {}", userId);
-            return ResponseEntity.ok(Map.of("success", true));
-        } catch (Exception e) {
-            log.error("[AUTH] PIN setup failed for {}: {}", userId, e.getMessage());
-            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    @PostMapping("/auth/verify")
-    ResponseEntity<Map<String, Object>> authVerify(@RequestBody Map<String, String> request) {
-        String userId  = request.getOrDefault("userId",  "").trim();
-        String pinHash = request.getOrDefault("pinHash", "").trim();
-
-        if (userId.isEmpty() || pinHash.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId and pinHash required."));
-        }
-        try {
-            File configFile = getConfigFile(userId);
-            if (!configFile.exists()) {
-                return ResponseEntity.ok(Map.of("success", false, "error", "Account not found. Check your username."));
-            }
-            Map<String, String> config = loadOrSeedConfig(userId, null);
-            String stored = config.getOrDefault("pinHash", "");
-            if (stored.isEmpty()) {
-                return ResponseEntity.ok(Map.of("success", false, "error", "No PIN registered for this account."));
-            }
-            if (pinHash.equals(stored)) {
-                log.info("[AUTH] Verified login for user {}", userId);
-                String hint = config.getOrDefault("pinHint", "");
-                return ResponseEntity.ok(Map.of("success", true, "userId", userId, "pinHint", hint));
-            }
-            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect PIN."));
-        } catch (Exception e) {
-            log.error("[AUTH] Verify failed for {}: {}", userId, e.getMessage());
-            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // Deployment mode — tells the frontend whether CF service bindings are active
     // -------------------------------------------------------------------------
 
@@ -151,51 +89,36 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
-    // Auth status — check server filesystem for any registered user
+    // Auth status — returns SSO identity from Spring SecurityContext
     // -------------------------------------------------------------------------
 
     @GetMapping("/auth/status")
-    ResponseEntity<Map<String, Object>> authStatus() {
+    ResponseEntity<Map<String, Object>> authStatus(Authentication authentication) {
         Map<String, Object> response = new LinkedHashMap<>();
 
-        // CF mode: include model/MCP info so the UI can configure itself,
-        // but still run the normal PIN flow for per-user chat isolation.
         if (vcapConfig.isCfMode()) {
             response.put("cfMode",     true);
             response.put("model",      vcapConfig.getModelSummary());
             response.put("mcpServers", vcapConfig.getMcpServerNames());
         }
 
-        try {
-            File usersDir = new File(GreenplumAgentApplication.resolveDataDir()
-                    + File.separator + "users");
-            if (!usersDir.exists()) {
-                response.put("registered", false);
-                return ResponseEntity.ok(response);
-            }
-            File[] userDirs = usersDir.listFiles(File::isDirectory);
-            if (userDirs == null || userDirs.length == 0) {
-                response.put("registered", false);
-                return ResponseEntity.ok(response);
-            }
-            java.util.Arrays.sort(userDirs, (a, b) -> a.getName().compareTo(b.getName()));
-            for (File userDir : userDirs) {
-                if ("cf-system".equals(userDir.getName())) continue;
-                Map<String, String> config = loadOrSeedConfig(userDir.getName(), null);
-                if (!config.getOrDefault("pinHash", "").isEmpty()) {
-                    log.debug("[AUTH] Status: user {} is registered", userDir.getName());
-                    response.put("registered", true);
-                    response.put("userId", userDir.getName());
-                    return ResponseEntity.ok(response);
-                }
-            }
-            response.put("registered", false);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            log.error("[AUTH] Status check failed: {}", e.getMessage());
-            response.put("registered", false);
-            return ResponseEntity.ok(response);
+        if (authentication != null && authentication.getPrincipal() instanceof OidcUser oidcUser) {
+            String userId = oidcUser.getSubject();
+            String email  = oidcUser.getAttribute("user_name");
+            if (email == null || email.isBlank()) email = oidcUser.getEmail();
+            if (email == null) email = userId;
+            response.put("authenticated", true);
+            response.put("userId",        userId);
+            response.put("email",         email);
+            log.debug("[AUTH] Status: user {} (sub={})", email, userId);
+        } else {
+            // Local dev mode (DevSecurityConfig — no SSO): return a default user
+            response.put("authenticated", true);
+            response.put("userId",        "local-dev-user");
+            response.put("email",         "local-dev");
         }
+
+        return ResponseEntity.ok(response);
     }
 
     // -------------------------------------------------------------------------
@@ -578,11 +501,179 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
+    // Admin — allowed-users.txt (SSO access control)
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/admin/allowlist")
+    ResponseEntity<Map<String, Object>> loadAllowlist(@RequestParam String pinHash) {
+        if (!adminPinHash.equals(pinHash.trim())) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        }
+        try {
+            File f = getAllowlistFile();
+            String content = f.exists() ? Files.readString(f.toPath(), StandardCharsets.UTF_8) : "";
+            return ResponseEntity.ok(Map.of("success", true, "allowlist", content));
+        } catch (Exception e) {
+            log.error("[ADMIN] Allowlist load failed: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/allowlist")
+    ResponseEntity<Map<String, Object>> saveAllowlist(@RequestBody Map<String, String> request) {
+        String pinHash  = request.getOrDefault("pinHash",   "").trim();
+        String content  = request.getOrDefault("allowlist", "");
+        if (!adminPinHash.equals(pinHash)) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        }
+        try {
+            Files.writeString(getAllowlistFile().toPath(), content, StandardCharsets.UTF_8);
+            log.info("[ADMIN] Allowlist updated");
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("[ADMIN] Allowlist save failed: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/admin/known-users")
+    ResponseEntity<Map<String, Object>> knownUsers(@RequestParam String pinHash) {
+        if (!adminPinHash.equals(pinHash.trim())) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        }
+        try {
+            File f = new File(GreenplumAgentApplication.resolveDataDir(), "known-users.txt");
+            List<String> users = f.exists()
+                ? Files.readAllLines(f.toPath(), StandardCharsets.UTF_8).stream()
+                    .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                    .distinct().sorted().collect(java.util.stream.Collectors.toList())
+                : java.util.List.of();
+            return ResponseEntity.ok(Map.of("success", true, "users", users));
+        } catch (Exception e) {
+            log.error("[ADMIN] Known users load failed: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Live user-directory search via UAA SCIM API.
+     * Tries client_credentials token, then queries /Users?filter=...
+     * Returns empty list gracefully if scope is unavailable or UAA is unreachable.
+     */
+    @GetMapping("/admin/search-users")
+    ResponseEntity<Map<String, Object>> searchUsers(
+            @RequestParam String q,
+            @RequestParam String pinHash) {
+        if (!adminPinHash.equals(pinHash.trim())) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        }
+        String query = q == null ? "" : q.trim().toLowerCase();
+        if (query.length() < 2) {
+            return ResponseEntity.ok(Map.of("success", true, "users", List.of()));
+        }
+        try {
+            List<String> found = scimSearch(query);
+            return ResponseEntity.ok(Map.of("success", true, "users", found));
+        } catch (Exception e) {
+            log.debug("[ADMIN] SCIM search failed for '{}': {}", query, e.getMessage());
+            return ResponseEntity.ok(Map.of("success", true, "users", List.of()));
+        }
+    }
+
+    private List<String> scimSearch(String q) throws Exception {
+        String vcap = System.getenv("VCAP_SERVICES");
+        if (vcap == null || vcap.isBlank()) return List.of();
+
+        com.fasterxml.jackson.databind.JsonNode root = OBJECT_MAPPER.readTree(vcap);
+        String authDomain = "", clientId = "", clientSecret = "";
+        outer:
+        for (com.fasterxml.jackson.databind.JsonNode services : root) {
+            for (com.fasterxml.jackson.databind.JsonNode svc : services) {
+                if ("p-identity".equals(svc.path("label").asText())) {
+                    com.fasterxml.jackson.databind.JsonNode creds = svc.path("credentials");
+                    for (String key : new String[]{"auth_domain", "auth-domain"}) {
+                        String v = creds.path(key).asText("").trim();
+                        if (!v.isEmpty()) { authDomain = v; break; }
+                    }
+                    for (String key : new String[]{"client_id", "client-id"}) {
+                        String v = creds.path(key).asText("").trim();
+                        if (!v.isEmpty()) { clientId = v; break; }
+                    }
+                    for (String key : new String[]{"client_secret", "client-secret"}) {
+                        String v = creds.path(key).asText("").trim();
+                        if (!v.isEmpty()) { clientSecret = v; break; }
+                    }
+                    break outer;
+                }
+            }
+        }
+        if (authDomain.isEmpty() || clientId.isEmpty() || clientSecret.isEmpty()) return List.of();
+
+        java.net.http.HttpClient http = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(5)).build();
+
+        // Step 1 — client_credentials token
+        String tokenBody = "grant_type=client_credentials"
+                + "&client_id="     + java.net.URLEncoder.encode(clientId,     "UTF-8")
+                + "&client_secret=" + java.net.URLEncoder.encode(clientSecret, "UTF-8");
+        java.net.http.HttpRequest tokenReq = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(authDomain + "/oauth/token"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .timeout(java.time.Duration.ofSeconds(5))
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(tokenBody))
+                .build();
+        java.net.http.HttpResponse<String> tokenRes = http.send(tokenReq,
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (tokenRes.statusCode() != 200) return List.of();
+        String accessToken = OBJECT_MAPPER.readTree(tokenRes.body()).path("access_token").asText("").trim();
+        if (accessToken.isEmpty()) return List.of();
+
+        // Step 2 — SCIM search: match by email prefix OR userName prefix
+        String filter  = "email sw \"" + q + "\" or userName sw \"" + q + "\"";
+        String scimUrl = authDomain + "/Users?count=15&attributes=emails,userName"
+                + "&filter=" + java.net.URLEncoder.encode(filter, "UTF-8");
+        java.net.http.HttpRequest scimReq = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(scimUrl))
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Accept", "application/json")
+                .timeout(java.time.Duration.ofSeconds(8))
+                .GET().build();
+        java.net.http.HttpResponse<String> scimRes = http.send(scimReq,
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (scimRes.statusCode() != 200) return List.of();
+
+        // Step 3 — parse Resources array (UAA uses capital-R "Resources")
+        com.fasterxml.jackson.databind.JsonNode body = OBJECT_MAPPER.readTree(scimRes.body());
+        com.fasterxml.jackson.databind.JsonNode resources = body.path("Resources");
+        if (!resources.isArray() || resources.isEmpty()) resources = body.path("resources");
+
+        List<String> result = new ArrayList<>();
+        for (com.fasterxml.jackson.databind.JsonNode r : resources) {
+            com.fasterxml.jackson.databind.JsonNode emailsNode = r.path("emails");
+            if (emailsNode.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode e : emailsNode) {
+                    String val = e.path("value").asText("").trim().toLowerCase();
+                    if (!val.isEmpty() && !result.contains(val)) result.add(val);
+                }
+            }
+            if (result.isEmpty()) {
+                String un = r.path("userName").asText("").trim().toLowerCase();
+                if (!un.isEmpty() && !result.contains(un)) result.add(un);
+            }
+        }
+        return result;
+    }
+
+    // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
     private File getGlobalPromptFile() {
         return new File(GreenplumAgentApplication.resolveDataDir(), "global-prompt.txt");
+    }
+
+    private File getAllowlistFile() {
+        return new File(GreenplumAgentApplication.resolveDataDir(), "allowed-users.txt");
     }
 
     private String loadGlobalPrompt() {

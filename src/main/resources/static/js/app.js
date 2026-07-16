@@ -50,7 +50,15 @@ function applyThemeLabel() {
     var btn = document.getElementById('themeToggleBtn');
     if (!btn) return;
     var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    btn.textContent = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+    btn.textContent = isDark ? '☀️' : '🌙';
+    btn.title = isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode';
+    btn.dataset.tip = isDark ? 'Light Mode' : 'Dark Mode';
+}
+
+function togglePinVisibility() {
+    var inp = document.getElementById('adminPinInput');
+    if (!inp) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
 }
 
 function toggleTheme() {
@@ -74,10 +82,19 @@ function toggleTheme() {
 // =============================================================================
 
 let CURRENT_USER_ID = localStorage.getItem('gp_user_id') || null;
-let CF_MODE = false; // set true when VCAP_SERVICES bindings detected — hides Settings + PIN
+let USER_EMAIL      = '';
+let CF_MODE         = false;
+
+// --- SSO logout ---
+function logout() {
+    ['gp_user_id', 'gp_sessions', 'gp_current_session', 'gp_history', 'gp_config', 'gp_theme']
+        .forEach(k => localStorage.removeItem(k));
+    Object.keys(localStorage).filter(k => k.startsWith('gp_chat_ui_')).forEach(k => localStorage.removeItem(k));
+    window.location.href = '/logout';
+}
 
 // =============================================================================
-// PIN  (SHA-256 via Web Crypto; hash stored in browser AND on server)
+// ADMIN — global pre-training prompt + allowlist management
 // =============================================================================
 
 async function hashPin(pin) {
@@ -85,320 +102,7 @@ async function hashPin(pin) {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-
-function isSessionUnlocked() {
-    return localStorage.getItem('gp_unlocked') === 'true';
-}
-
-function markSessionUnlocked() {
-    localStorage.setItem('gp_unlocked', 'true');
-}
-
-function clearUnlockedState() {
-    localStorage.removeItem('gp_unlocked');
-    localStorage.removeItem('gp_credential_hash');
-}
-
-// Silently verify the cached PIN hash against the server on every boot.
-// Returns: true = valid, false = invalid (stale/deleted), null = network error (offline)
-async function silentVerifyWithServer() {
-    const hash = localStorage.getItem('gp_credential_hash');
-    if (!CURRENT_USER_ID || !hash) return false;
-    try {
-        const res  = await fetch('/api/auth/verify', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: hash })
-        });
-        const data = await res.json();
-        return data.success === true;
-    } catch (e) {
-        return null; // network error — treat as offline, do not force sign-out
-    }
-}
-
-// --- First-visit PIN setup ---
-function showPinSetup() {
-    document.getElementById('pinSetupModal').style.display = 'flex';
-    setTimeout(() => document.getElementById('setupUsername').focus(), 100);
-}
-
-async function confirmSetupPin() {
-    const username = document.getElementById('setupUsername').value.trim();
-    const pin      = document.getElementById('setupPin').value;
-    const confirm  = document.getElementById('setupPinConfirm').value;
-    const hint     = document.getElementById('setupPinHint').value.trim();
-    const errEl    = document.getElementById('pinSetupError');
-    const btn      = document.querySelector('#pinSetupModal .btn-save');
-
-    errEl.style.display = 'none';
-
-    if (!username || !/^[a-zA-Z0-9_-]{3,50}$/.test(username)) {
-        errEl.textContent = 'Username must be 3–50 characters (letters, numbers, - or _).';
-        errEl.style.display = 'block'; return;
-    }
-    if (!pin || pin.length < 4) {
-        errEl.textContent = 'PIN must be at least 4 characters.';
-        errEl.style.display = 'block'; return;
-    }
-    if (pin !== confirm) {
-        errEl.textContent = 'PINs do not match.';
-        errEl.style.display = 'block'; return;
-    }
-
-    btn.textContent = '⏳ Saving...'; btn.disabled = true;
-    const hash = await hashPin(pin);
-
-    try {
-        const res  = await fetch('/api/auth/setup', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: username, pinHash: hash, pinHint: hint })
-        });
-        const data = await res.json();
-        if (!data.success) {
-            errEl.textContent = data.error || 'Failed to save PIN to server.';
-            errEl.style.display = 'block'; return;
-        }
-    } catch (e) {
-        errEl.textContent = 'Could not reach the server. Please ensure the server is running.';
-        errEl.style.display = 'block'; return;
-    } finally {
-        btn.textContent = 'Create PIN'; btn.disabled = false;
-    }
-
-    CURRENT_USER_ID = username;
-    localStorage.setItem('gp_user_id', username);
-    localStorage.setItem('gp_credential_hash', hash);
-    localStorage.setItem('gp_pin_hint', hint);
-    markSessionUnlocked();
-    document.getElementById('pinSetupModal').style.display = 'none';
-    bootApp();
-}
-
-// --- Returning-visit PIN entry ---
-function showPinEntry() {
-    document.getElementById('pinEntryModal').style.display = 'flex';
-    setTimeout(() => document.getElementById('entryPin').focus(), 100);
-}
-
-async function confirmEntryPin() {
-    const pin   = document.getElementById('entryPin').value;
-    const errEl = document.getElementById('pinEntryError');
-    const btn   = document.querySelector('#pinEntryModal .btn-save');
-    errEl.style.display = 'none';
-
-    if (!pin) {
-        errEl.textContent = 'Please enter your PIN.';
-        errEl.style.display = 'block'; return;
-    }
-
-    // Always verify against server — browser cache is never used to authenticate
-    btn.textContent = '⏳ Verifying...'; btn.disabled = true;
-    try {
-        const hash = await hashPin(pin);
-        const res  = await fetch('/api/auth/verify', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: hash })
-        });
-        const data = await res.json();
-        if (data.success) {
-            localStorage.setItem('gp_credential_hash', hash); // update for silent boot verify only
-            markSessionUnlocked();
-            document.getElementById('pinEntryModal').style.display = 'none';
-            document.getElementById('entryPin').value = '';
-            bootApp();
-        } else {
-            localStorage.removeItem('gp_credential_hash'); // clear stale cache
-            errEl.textContent = 'Incorrect PIN. Please try again.';
-            errEl.style.display = 'block';
-            document.getElementById('entryPin').value = '';
-        }
-    } catch (e) {
-        errEl.textContent = 'Cannot reach server. Please check your connection.';
-        errEl.style.display = 'block';
-    } finally {
-        btn.textContent = 'Unlock'; btn.disabled = false;
-    }
-}
-
-// --- Account recovery (browser cache was cleared) ---
-function showRecoverAccount() {
-    document.getElementById('pinSetupModal').style.display = 'none';
-    document.getElementById('recoverModal').style.display = 'flex';
-    setTimeout(() => document.getElementById('recoverUsername').focus(), 100);
-}
-
-function cancelRecover() {
-    document.getElementById('recoverModal').style.display = 'none';
-    showPinSetup();
-}
-
-async function confirmRecover() {
-    const username = document.getElementById('recoverUsername').value.trim();
-    const pin      = document.getElementById('recoverPin').value;
-    const errEl    = document.getElementById('recoverError');
-    const btn      = document.querySelector('#recoverModal .btn-save');
-
-    errEl.style.display = 'none';
-    if (!username || !pin) {
-        errEl.textContent = 'Username and PIN are required.';
-        errEl.style.display = 'block'; return;
-    }
-
-    btn.textContent = '⏳ Verifying...'; btn.disabled = true;
-    const hash = await hashPin(pin);
-    let data;   // declared outside try so it's accessible after the block
-
-    try {
-        const res  = await fetch('/api/auth/verify', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: username, pinHash: hash })
-        });
-        data = await res.json();
-        if (!data.success) {
-            errEl.textContent = data.error || 'Verification failed.';
-            errEl.style.display = 'block'; return;
-        }
-    } catch (e) {
-        errEl.textContent = 'Could not reach the server.';
-        errEl.style.display = 'block'; return;
-    } finally {
-        btn.textContent = 'Sign In'; btn.disabled = false;
-    }
-
-    // Restore identity — also restore pinHint so "Forgot PIN?" works on new browsers
-    CURRENT_USER_ID = username;
-    localStorage.setItem('gp_user_id', username);
-    localStorage.setItem('gp_credential_hash', hash);
-    if (data && data.pinHint) localStorage.setItem('gp_pin_hint', data.pinHint);
-    markSessionUnlocked();
-    document.getElementById('recoverModal').style.display = 'none';
-    document.getElementById('recoverPin').value = '';
-    bootApp();
-}
-
-// --- Forgot PIN ---
-function showForgotPin() {
-    document.getElementById('pinEntryModal').style.display = 'none';
-    const hint = localStorage.getItem('gp_pin_hint') || '';
-    const box  = document.getElementById('pinHintDisplay');
-    box.textContent = hint.trim() ? hint : 'No hint was set for this PIN.';
-    document.getElementById('forgotPinModal').style.display = 'flex';
-}
-
-function backToPinEntry() {
-    document.getElementById('forgotPinModal').style.display = 'none';
-    showPinEntry();
-}
-
-function showResetConfirm() {
-    document.getElementById('forgotPinModal').style.display = 'none';
-    document.getElementById('resetConfirmModal').style.display = 'flex';
-}
-
-function cancelReset() {
-    document.getElementById('resetConfirmModal').style.display = 'none';
-    showPinEntry();
-}
-
-async function executeReset() {
-    await clearAllServerData();
-    clearAllLocalData(true);
-    document.getElementById('resetConfirmModal').style.display = 'none';
-    window.location.reload();
-}
-
-// --- Change PIN modal ---
-function openChangePinModal() {
-    closeSettings();
-    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    const err = document.getElementById('changePinError');
-    if (err) { err.style.display = 'none'; err.className = 'test-result'; }
-    document.getElementById('changePinModal').style.display = 'flex';
-}
-
-function closeChangePinModal() {
-    document.getElementById('changePinModal').style.display = 'none';
-    ['changePinCurrent','changePinNew','changePinConfirm','changePinHint'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    const err = document.getElementById('changePinError');
-    if (err) err.style.display = 'none';
-}
-
-async function changePin() {
-    const current  = document.getElementById('changePinCurrent').value;
-    const newPin   = document.getElementById('changePinNew').value;
-    const confirm  = document.getElementById('changePinConfirm').value;
-    const newHint  = document.getElementById('changePinHint').value.trim();
-    const errEl    = document.getElementById('changePinError');
-
-    errEl.style.display = 'none';
-    errEl.className     = 'test-result test-error';
-
-    if (!current || !newPin) {
-        errEl.textContent = 'Current and new PIN are required.';
-        errEl.style.display = 'block'; return;
-    }
-    if (newPin.length < 4) {
-        errEl.textContent = 'New PIN must be at least 4 characters.';
-        errEl.style.display = 'block'; return;
-    }
-    if (newPin !== confirm) {
-        errEl.textContent = 'New PINs do not match.';
-        errEl.style.display = 'block'; return;
-    }
-
-    const currentHash = await hashPin(current);
-
-    // Always verify current PIN against server (not just localStorage)
-    try {
-        const verifyRes  = await fetch('/api/auth/verify', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: currentHash })
-        });
-        const verifyData = await verifyRes.json();
-        if (!verifyData.success) {
-            errEl.textContent = 'Current PIN is incorrect.';
-            errEl.style.display = 'block'; return;
-        }
-    } catch (e) {
-        errEl.textContent = 'Could not reach server to verify current PIN.';
-        errEl.style.display = 'block'; return;
-    }
-
-    const newHash = await hashPin(newPin);
-
-    // Save new PIN to server first, then update localStorage
-    try {
-        const res  = await fetch('/api/auth/setup', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: CURRENT_USER_ID, pinHash: newHash, pinHint: newHint })
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Server error');
-    } catch (e) {
-        errEl.textContent = '❌ Failed to save new PIN to server: ' + e.message;
-        errEl.style.display = 'block'; return;
-    }
-
-    localStorage.setItem('gp_credential_hash', newHash);
-    if (newHint) localStorage.setItem('gp_pin_hint', newHint);
-
-    errEl.className     = 'test-result test-success';
-    errEl.textContent   = '✅ PIN updated successfully.';
-    errEl.style.display = 'block';
-    setTimeout(closeChangePinModal, 1500);
-}
-
-// =============================================================================
-// ADMIN — global pre-training prompt
-// =============================================================================
-
-let adminPinHashInSession = null; // keep admin hash in memory for this browser session
+let adminPinHashInSession = null;
 
 function openAdminModal() {
     adminPinHashInSession = null;
@@ -407,7 +111,6 @@ function openAdminModal() {
     document.getElementById('adminEditorSection').style.display = 'none';
     document.getElementById('adminPinInput').value = '';
     document.getElementById('adminAuthError').style.display = 'none';
-    // Reset button — may have been left disabled after a previous successful verify
     const btn = document.getElementById('adminAuthBtn');
     btn.textContent = 'Verify & Enter';
     btn.disabled    = false;
@@ -440,26 +143,48 @@ async function verifyAdminPin() {
         const data = await res.json();
 
         if (!data.success) {
-            errEl.className = 'test-result test-error';
+            errEl.className   = 'test-result test-error';
             errEl.textContent = data.error || 'Incorrect admin PIN.';
             errEl.style.display = 'block';
             btn.textContent = 'Verify & Enter'; btn.disabled = false;
             return;
         }
 
-        // Verified — show editor with current global prompt
         adminPinHashInSession = hash;
-        document.getElementById('globalPromptText').value = data.globalPrompt || '';
+        // Load known users for autocomplete (non-blocking)
+        loadKnownUsersAutocomplete();
+        // Load global prompt in read-only mode
+        const promptEl = document.getElementById('globalPromptText');
+        promptEl.value = data.globalPrompt || '';
+        promptEl.readOnly = true;
+        promptEl.style.opacity = '0.7';
+        const editBtn = document.getElementById('promptEditBtn');
+        if (editBtn) editBtn.style.display = 'inline-block';
+        const saveBtn = document.getElementById('promptSaveBtn');
+        if (saveBtn) saveBtn.style.display = 'none';
         document.getElementById('adminSaveResult').style.display = 'none';
         document.getElementById('adminAuthSection').style.display = 'none';
         document.getElementById('adminEditorSection').style.display = 'block';
+        // Load and show the allowlist
+        await loadAllowlist();
+        const allowlistSection = document.getElementById('allowlistSection');
+        if (allowlistSection) allowlistSection.style.display = 'block';
 
     } catch (e) {
-        errEl.className = 'test-result test-error';
+        errEl.className   = 'test-result test-error';
         errEl.textContent = 'Could not reach server.';
         errEl.style.display = 'block';
         btn.textContent = 'Verify & Enter'; btn.disabled = false;
     }
+}
+
+function editGlobalPrompt() {
+    const promptEl = document.getElementById('globalPromptText');
+    promptEl.readOnly = false;
+    promptEl.style.opacity = '1';
+    promptEl.focus();
+    document.getElementById('promptEditBtn').style.display = 'none';
+    document.getElementById('promptSaveBtn').style.display = 'inline-block';
 }
 
 async function saveGlobalPrompt() {
@@ -473,15 +198,172 @@ async function saveGlobalPrompt() {
             body: JSON.stringify({ pinHash: adminPinHashInSession, prompt })
         });
         const data = await res.json();
-        resultEl.className = 'test-result ' + (data.success ? 'test-success' : 'test-error');
+        resultEl.className   = 'test-result ' + (data.success ? 'test-success' : 'test-error');
         resultEl.textContent = data.success
-            ? '✅ Global prompt saved. Applies to all users on the next request.'
+            ? '✅ Global prompt saved.'
             : '❌ ' + (data.error || 'Save failed.');
         resultEl.style.display = 'block';
+        if (data.success) {
+            // Switch back to read-only
+            const promptEl = document.getElementById('globalPromptText');
+            promptEl.readOnly = true; promptEl.style.opacity = '0.7';
+            document.getElementById('promptEditBtn').style.display = 'inline-block';
+            document.getElementById('promptSaveBtn').style.display = 'none';
+        }
     } catch (e) {
-        resultEl.className = 'test-result test-error';
+        resultEl.className   = 'test-result test-error';
         resultEl.textContent = '❌ Could not reach server.';
         resultEl.style.display = 'block';
+    }
+}
+
+// Internal email list state for the allowlist editor
+let _allowlistEmails = [];
+
+async function loadAllowlist() {
+    if (!adminPinHashInSession) return;
+    try {
+        const res  = await fetch('/api/admin/allowlist?pinHash=' + encodeURIComponent(adminPinHashInSession));
+        const data = await res.json();
+        if (data.success) {
+            _allowlistEmails = (data.allowlist || '')
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l && !l.startsWith('#'));
+        }
+    } catch (e) {}
+}
+
+async function _saveAllowlist() {
+    const text     = _allowlistEmails.join('\n');
+    const resultEl = document.getElementById('allowlistSaveResult');
+    if (resultEl) resultEl.style.display = 'none';
+    try {
+        const res  = await fetch('/api/admin/allowlist', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, allowlist: text })
+        });
+        const data = await res.json();
+        if (resultEl) {
+            resultEl.className   = 'test-result ' + (data.success ? 'test-success' : 'test-error');
+            resultEl.textContent = data.success
+                ? '✅ Allowlist saved. Takes effect on next login.'
+                : '❌ ' + (data.error || 'Save failed.');
+            resultEl.style.display = 'block';
+            setTimeout(() => { if (resultEl) resultEl.style.display = 'none'; }, 3000);
+        }
+    } catch (e) {
+        if (resultEl) {
+            resultEl.className   = 'test-result test-error';
+            resultEl.textContent = '❌ Could not reach server.';
+            resultEl.style.display = 'block';
+        }
+    }
+}
+
+// Populate datalist from already-logged-in users (on admin panel open)
+async function loadKnownUsersAutocomplete() {
+    if (!adminPinHashInSession) return;
+    try {
+        const res  = await fetch('/api/admin/known-users?pinHash=' + encodeURIComponent(adminPinHashInSession));
+        const data = await res.json();
+        if (!data.success || !data.users) return;
+        const dl = document.getElementById('knownUsersList');
+        if (!dl) return;
+        dl.innerHTML = '';
+        data.users.forEach(email => {
+            const opt = document.createElement('option');
+            opt.value = email;
+            dl.appendChild(opt);
+        });
+    } catch (e) {}
+}
+
+// Live directory search — debounced, fires when admin types 2+ chars
+let _userSearchTimer = null;
+function onAllowlistEmailInput() {
+    if (!adminPinHashInSession) return;
+    clearTimeout(_userSearchTimer);
+    const q = (document.getElementById('allowlistEmailInput').value || '').trim();
+    if (q.length < 2) return;
+    _userSearchTimer = setTimeout(async () => {
+        try {
+            const res  = await fetch('/api/admin/search-users?q=' + encodeURIComponent(q)
+                                     + '&pinHash=' + encodeURIComponent(adminPinHashInSession));
+            const data = await res.json();
+            if (!data.success || !data.users || !data.users.length) return;
+            const dl = document.getElementById('knownUsersList');
+            if (!dl) return;
+            // Merge search results with existing options (preserve known-users)
+            const existing = new Set(Array.from(dl.options).map(o => o.value));
+            data.users.forEach(email => {
+                if (!existing.has(email)) {
+                    const opt = document.createElement('option');
+                    opt.value = email;
+                    dl.appendChild(opt);
+                }
+            });
+        } catch (e) {}
+    }, 300);
+}
+
+async function addAllowlistEmail() {
+    const input   = document.getElementById('allowlistEmailInput');
+    const resultEl = document.getElementById('allowlistAddResult');
+    const email   = (input.value || '').trim().toLowerCase();
+    resultEl.style.display = 'none';
+
+    if (!email) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        resultEl.className = 'test-result test-error';
+        resultEl.textContent = '❌ Enter a valid email address.';
+        resultEl.style.display = 'block'; return;
+    }
+    if (_allowlistEmails.includes(email)) {
+        resultEl.className = 'test-result test-error';
+        resultEl.textContent = '⚠️ ' + email + ' is already in the list.';
+        resultEl.style.display = 'block'; return;
+    }
+    _allowlistEmails.push(email);
+    input.value = '';
+    await _saveAllowlist();
+    // Re-render if list is visible
+    const listEl = document.getElementById('allowlistUserList');
+    if (listEl && listEl.style.display !== 'none') renderAllowlistUI();
+}
+
+async function removeAllowlistEmail(email) {
+    _allowlistEmails = _allowlistEmails.filter(e => e !== email);
+    await _saveAllowlist();
+    renderAllowlistUI();
+}
+
+function renderAllowlistUI() {
+    const listEl = document.getElementById('allowlistUserList');
+    if (!listEl) return;
+    if (_allowlistEmails.length === 0) {
+        listEl.innerHTML = '<p style="font-size:0.85em;color:var(--muted-text);margin:0;">No users added — all authenticated BC users have access.</p>';
+        return;
+    }
+    listEl.innerHTML = _allowlistEmails.map(email =>
+        `<div class="allowlist-item">
+            <span>${email}</span>
+            <button class="allowlist-item-remove" onclick="removeAllowlistEmail('${email}')" title="Remove">✕</button>
+        </div>`
+    ).join('');
+}
+
+function toggleAllowlistView() {
+    const listEl = document.getElementById('allowlistUserList');
+    const btn    = document.getElementById('allowlistViewBtn');
+    if (!listEl) return;
+    if (listEl.style.display === 'none') {
+        renderAllowlistUI();
+        listEl.style.display = 'block';
+        if (btn) btn.textContent = '🙈 Hide User List';
+    } else {
+        listEl.style.display = 'none';
+        if (btn) btn.textContent = '👁 Show User List';
     }
 }
 
@@ -607,64 +489,62 @@ async function deleteFavourite(id) {
 // APP BOOT
 // =============================================================================
 
-// Ask the server whether a user is already registered on its filesystem.
-// Falls back to localStorage if the server is unreachable (offline mode).
+// Fetch SSO auth status from the server. If Spring Security redirected to SSO login,
+// res.redirected is true — we redirect the full page to trigger SSO.
 async function fetchAuthStatus() {
     try {
         const res = await fetch('/api/auth/status');
+        if (res.redirected) {
+            window.location.href = '/oauth2/authorization/sso';
+            return { authenticated: false };
+        }
         return await res.json();
     } catch (e) {
-        const cached = localStorage.getItem('gp_user_id');
-        if (cached) return { registered: true, userId: cached };
-        return { registered: false };
+        return { authenticated: false };
     }
 }
 
 window.onload = async function () {
     applyThemeLabel();
     try {
-        // Always check server filesystem first — works in incognito & after cache clear
         const status = await fetchAuthStatus();
 
-        // CF mode: VCAP_SERVICES bindings detected — configure UI from platform services.
-        // PIN login is still required for per-user chat isolation.
         if (status.cfMode) {
-            CF_MODE = true;
+            CF_MODE        = true;
             CF_MODEL_LABEL = status.model || '';
             CF_MCP_SERVERS = status.mcpServers || [];
-            // Hide Settings immediately — model/MCP config comes from platform bindings
             const settingsBtn = document.getElementById('settingsBtn');
             if (settingsBtn) settingsBtn.style.display = 'none';
-            // Build MCP service dots in the header now so they're visible during login
             buildMcpDots();
         }
 
-        if (!status.registered) {
-            // No PIN on server yet — show create account (username + PIN, one time only)
-            showPinSetup();
+        if (!status.authenticated) {
+            window.location.href = '/oauth2/authorization/sso';
             return;
         }
 
-        // User is registered on server — sync identity from server, no username input needed
         CURRENT_USER_ID = status.userId;
-        localStorage.setItem('gp_user_id', status.userId);
+        USER_EMAIL      = status.email || status.userId;
+        localStorage.setItem('gp_user_id', CURRENT_USER_ID);
 
-        if (isSessionUnlocked()) {
-            // Already verified earlier in this browser session — silent re-check
-            const verified = await silentVerifyWithServer();
-            if (verified === true) {
-                bootApp();
-            } else {
-                clearUnlockedState();
-                showPinEntry();
-            }
-        } else {
-            // Require PIN (first open, incognito session, or after cache clear)
-            showPinEntry();
-        }
+        // Compute initials from email (e.g. "abhishek.jain@broadcom.com" → "AJ")
+        const atIdx    = USER_EMAIL.indexOf('@');
+        const localPart = atIdx > 0 ? USER_EMAIL.substring(0, atIdx) : USER_EMAIL;
+        const parts    = localPart.split(/[._\-+]/);
+        const initials = parts.length >= 2
+            ? (parts[0][0] || '') + (parts[1][0] || '')
+            : (localPart[0] || '?');
+
+        const avatarEl = document.getElementById('hdrAvatar');
+        if (avatarEl) { avatarEl.textContent = initials.toUpperCase(); avatarEl.title = USER_EMAIL; }
+
+        const userEmailEl = document.getElementById('userEmailDisplay');
+        if (userEmailEl) userEmailEl.textContent = USER_EMAIL;
+
+        bootApp();
     } catch (e) {
         console.error('[boot] Unexpected error:', e);
-        showPinEntry();
+        window.location.href = '/oauth2/authorization/sso';
     }
 };
 
@@ -698,9 +578,6 @@ function applyCfMode(status) {
     }
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) settingsBtn.style.display = 'none';
-    // Expose Change PIN directly in the header (Settings is hidden in CF mode)
-    const changePinBtn = document.getElementById('changePinBtn');
-    if (changePinBtn) changePinBtn.style.display = '';
     buildMcpDots();
 }
 
@@ -834,12 +711,9 @@ async function bootApp() {
         "Show cluster status",
         ...Array.isArray(savedHistory) ? savedHistory : []
     ]);
-    initSessions();    // uses globals freshly populated from server
+    initSessions();
     loadFavourites();
     updateModeBadge();
-    // Show Change PIN in header for all logged-in users
-    const changePinBtn = document.getElementById('changePinBtn');
-    if (changePinBtn) changePinBtn.style.display = '';
     autoConnect();
 }
 
@@ -1126,10 +1000,12 @@ function saveMessageToStorage(targetSessionId, text, className, isMarkdown) {
     scheduleSessionSave();
 }
 
+let _msgSeq = 0;
+
 function addMessageToDOM(text, className, isMarkdown) {
     const messagesDiv = document.getElementById('messages');
     const wrapperDiv  = document.createElement('div');
-    const uniqueId    = 'msg-' + Date.now();
+    const uniqueId    = 'msg-' + (++_msgSeq);
     wrapperDiv.id        = uniqueId;
     wrapperDiv.className = `message-wrapper ${className === 'user-message' ? 'wrapper-user' : 'wrapper-ai'}`;
 
@@ -1301,16 +1177,18 @@ function exportSinglePDF(wrapperId, btnElement) {
     p,li,span,strong,em{color:#1a2e1f!important;}
     a{color:#2d6a4f!important;}
     h1,h2,h3,h4,h5,h6{color:#2d6a4f!important;margin:14px 0 6px;}
-    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;}
+    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;page-break-inside:avoid!important;}
     code{color:#0f4c2a!important;background:#f5f9f6!important;font-family:monospace!important;font-size:12px!important;}
-    table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;}
+    table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;page-break-inside:avoid!important;}
     th{background:#2d6a4f!important;color:#ffffff!important;padding:9px 11px!important;text-align:left!important;}
     td{padding:7px 11px!important;border:1px solid #bbf7d0!important;color:#1a2e1f!important;background:#ffffff!important;}
     tr:nth-child(even) td{background:#f0fdf4!important;}
-    .table-responsive{overflow:visible!important;}
+    tr{page-break-inside:avoid!important;}
+    .table-responsive{overflow:visible!important;page-break-inside:avoid!important;}
     .copy-btn,button{display:none!important;}
-    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;}
-    img{max-width:100%!important;height:auto!important;}
+    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;page-break-inside:avoid!important;}
+    img{max-width:100%!important;height:auto!important;page-break-inside:avoid!important;}
+    h1,h2,h3,h4{page-break-after:avoid!important;}
   </style>
 
   <div style="line-height:1.75;color:#1a2e1f;">
@@ -1323,11 +1201,12 @@ function exportSinglePDF(wrapperId, btnElement) {
 </div>`;
 
         const options = {
-            margin:      [6, 6, 6, 6],
+            margin:      [10, 10, 10, 10],
             filename:    filename,
             image:       { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' },
-            jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak:   { mode: ['avoid-all', 'css', 'legacy'] }
         };
 
         // Temporarily switch to light mode so CSS variables resolve correctly in the render
@@ -1443,7 +1322,7 @@ async function confirmDeleteAll() {
             body: JSON.stringify({ userId: CURRENT_USER_ID })
         });
     } catch (e) {}
-    clearAllLocalData(false);  // false = keep PIN
+    clearAllLocalData();
     await createNewChat(true);
     showReconnectBanner();
 }
@@ -1470,23 +1349,13 @@ async function clearAllServerData() {
     } catch (e) {}
 }
 
-function clearAllLocalData(includingPin) {
-    // Only remove chat history — credentials (gp_config) are preserved
+function clearAllLocalData() {
     const keysToRemove = ['gp_sessions', 'gp_current_session', 'gp_history'];
     Object.keys(localStorage)
         .filter(k => k.startsWith('gp_chat_ui_'))
         .forEach(k => localStorage.removeItem(k));
     keysToRemove.forEach(k => localStorage.removeItem(k));
 
-    if (includingPin) {
-        localStorage.removeItem('gp_credential_hash');
-        localStorage.removeItem('gp_pin_hint');
-        localStorage.removeItem('gp_user_id');
-        localStorage.removeItem('gp_unlocked');
-        CURRENT_USER_ID = null;
-    }
-
-    // Reset in-memory state
     chatSessions         = [];
     currentSessionId     = null;
     currentChatUiHistory = [];
