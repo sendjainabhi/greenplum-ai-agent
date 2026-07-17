@@ -153,6 +153,9 @@ body { font-family: system-ui, -apple-system, sans-serif; background-color: var(
 .message-wrapper { display: flex; flex-direction: column; gap: 5px; max-width: 92%; }
 .wrapper-user { align-self: flex-end; }
 .wrapper-ai { align-self: flex-start; width: 100%; }
+.msg-time { font-size: 0.7em; opacity: 0.5; letter-spacing: 0.02em; }
+.wrapper-user .msg-time { align-self: flex-end; }
+.wrapper-ai  .msg-time { align-self: flex-start; }
 .message { padding: 16px 20px; border-radius: 8px; line-height: 1.5; overflow-wrap: break-word; }
 .user-message { background: var(--user-bubble-bg); }
 .ai-message { background: var(--ai-bubble-bg); width: 100%; box-sizing: border-box; }

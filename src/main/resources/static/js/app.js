@@ -901,7 +901,7 @@ async function sendPrompt() {
     updateSessionTitle(prompt, targetSessionId);
 
     if (currentSessionId === targetSessionId) {
-        addMessageToDOM(prompt, 'user-message', false);
+        addMessageToDOM(prompt, 'user-message', false, new Date());
         input.value        = '';
         input.style.height = 'auto';
         updateUIState(true);
@@ -947,7 +947,7 @@ async function sendPrompt() {
         const aiText = (data && typeof data.response === 'string') ? data.response
                      : '⚠️ Server returned an unexpected response. Please try again.';
         saveMessageToStorage(targetSessionId, aiText, 'ai-message', true);
-        if (currentSessionId === targetSessionId) addMessageToDOM(aiText, 'ai-message', true);
+        if (currentSessionId === targetSessionId) addMessageToDOM(aiText, 'ai-message', true, new Date());
 
         suggestionHistory.add(prompt);
         localStorage.setItem('gp_history', JSON.stringify(Array.from(suggestionHistory)));
@@ -958,7 +958,7 @@ async function sendPrompt() {
         const errText = error.name === 'AbortError' ? '⚠️ Request cancelled by user.' : 'Error connecting to backend API.';
         saveMessageToStorage(targetSessionId, errText, 'ai-message', false);
         if (currentSessionId === targetSessionId) {
-            addMessageToDOM(errText, 'ai-message', false);
+            addMessageToDOM(errText, 'ai-message', false, new Date());
             if (error.name !== 'AbortError') updateHeaderStatus('offline');
         }
     } finally {
@@ -1004,7 +1004,7 @@ function saveMessageToStorage(targetSessionId, text, className, isMarkdown) {
 
 let _msgSeq = 0;
 
-function addMessageToDOM(text, className, isMarkdown) {
+function addMessageToDOM(text, className, isMarkdown, timestamp) {
     const messagesDiv = document.getElementById('messages');
     const wrapperDiv  = document.createElement('div');
     const uniqueId    = 'msg-' + (++_msgSeq);
@@ -1064,6 +1064,13 @@ function addMessageToDOM(text, className, isMarkdown) {
         }
     } else {
         msgDiv.textContent = text;
+    }
+
+    if (timestamp) {
+        const timeEl = document.createElement('span');
+        timeEl.className = 'msg-time';
+        timeEl.textContent = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        wrapperDiv.appendChild(timeEl);
     }
 
     if (className === 'user-message') {
