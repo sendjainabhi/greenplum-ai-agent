@@ -13,7 +13,7 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 2. [Features](#features)
 3. [Example Prompts](#example-prompts)
 4. [MCP Capabilities](#mcp-capabilities)
-5. [Admin Panel](#admin-panel)
+5. [Admin Panel & User Preferences](#admin-panel)
 6. [Platform Services](#platform-services)
 7. [Deployment](#deployment)
 8. [Architecture](#architecture)
@@ -34,7 +34,7 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 
 | Indicator | Meaning |
 | :--- | :--- |
-| **Model dot** | Green when AI model endpoint is reachable |
+| **Model name + dot** | Shows the bound model name (e.g. `gpt-4o`); dot is green when reachable. Hover for full model name. |
 | **Greenplum dot** | Green when Greenplum MCP server HTTP is reachable |
 | **OpenMetadata dot** | Shown only when that service is bound; green/red per connection |
 
@@ -70,6 +70,27 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 
 Save any prompt with a label for quick reuse. Accessible from the sidebar; persisted across sessions.
 
+### 👤 User Preferences
+
+Each user can set personal AI instructions that apply only to their sessions and take priority over the admin global prompt.
+
+- **Access** — click your **initials circle** in the top-left of the header
+- **Edit** — click ✏️ Edit to modify, **Save** to persist immediately
+- **Persisted server-side** — stored at `users/{userId}/user-prefs.txt` on block storage; survives logouts, browser changes, and app restages
+- **Priority** — appended after the admin global prompt, so user instructions override global defaults for that user
+
+**Useful preference examples:**
+
+| Category | Example |
+| :--- | :--- |
+| Region default | "I cover the AMER region — default to AMER unless I specify otherwise" |
+| Product focus | "I work on the Spring Runtime team — focus on Spring product data" |
+| Fiscal period | "Default to FY25 data unless I specify a different period" |
+| Formatting | "Format large numbers with commas. Show amounts in millions rounded to 2 decimal places." |
+| SQL visibility | "Do not show SQL queries in responses" |
+| Response style | "Keep answers concise — no more than 3 sentences unless I ask for details" |
+| Rankings | "When showing rankings, always include top 5 and bottom 5" |
+
 ### 🔐 Admin Panel
 
 - Global pre-prompt — applies to all users, takes effect immediately without restart
@@ -80,7 +101,7 @@ Save any prompt with a label for quick reuse. Accessible from the sidebar; persi
 
 - **Dark / Light mode** — persisted per user
 - **Theme-aware** — all modals, inputs, and status indicators adapt to the selected theme
-- **Compact header** — initials avatar, icon-only action buttons with tooltips, status dots
+- **Compact header** — initials avatar (click for preferences), icon-only action buttons with tooltips, model name + status dots
 
 ---
 
@@ -137,10 +158,19 @@ Schema introspection (`information_schema.columns`) is performed before querying
 
 Access: click the **🔐** button in the header and enter the `ADMIN_PIN`.
 
+### Prompt Priority Order
+
+Instructions are applied in this order on every chat request — later entries take priority:
+
+1. **System prompt** (`system-prompt.txt`) — embedded in the JAR; defines core AI behaviour and rules
+2. **Admin global prompt** (`global-prompt.txt`) — set via the Admin Panel; applies to all users
+3. **User personal preferences** (`users/{userId}/user-prefs.txt`) — set per-user via the initials button; overrides global
+
 ### Global Pre-Training Prompt
 
-A system instruction prepended to every chat request for every user. Useful for enforcing data governance rules, restricting topic scope, or providing database context.
+A system instruction appended to every chat request for every user. Useful for enforcing data governance rules, restricting topic scope, or providing shared database context (e.g. schema rules, default filters).
 
+- Stored at `{data-dir}/global-prompt.txt` on block storage; read fresh on every request
 - Click **✏️ Edit** to modify, **Save** to apply immediately (no restart needed)
 - Leave blank to disable
 
@@ -201,7 +231,16 @@ Supported providers: **OpenAI-compatible** (vLLM, LMStudio, ChatGPT), **Anthropi
 
 ### Block Storage (`greenplum-agent-storage`)
 
-CF block storage volume service. Stores per-user session files, AI memory, saved favourites, the admin global prompt, and the access control allowlist. The app reads the actual mount path from `VCAP_SERVICES → volume_mounts[*].container_dir` — the `AGENT_DATA_DIR` env var is only a hint.
+CF block storage volume service. Stores all persistent data for the app. The app reads the actual mount path from `VCAP_SERVICES → volume_mounts[*].container_dir` — the `AGENT_DATA_DIR` env var is only a hint.
+
+| Path | Content |
+| :--- | :--- |
+| `global-prompt.txt` | Admin global pre-training prompt |
+| `allowed-users.txt` | Email allowlist for access control |
+| `users/{userId}/config.json` | Per-user AI model and MCP settings |
+| `users/{userId}/sessions.json` | Per-user chat session history |
+| `users/{userId}/favourites.json` | Per-user saved favourite prompts |
+| `users/{userId}/user-prefs.txt` | Per-user personal AI preferences |
 
 ```bash
 # Create block storage (ops team, once per environment):
@@ -432,6 +471,10 @@ Browser  (index.html · app.js · style.css)
     ├── GET  /api/sessions/load
     ├── POST /api/sessions/save
     └── POST /api/memory/clear
+    │
+    │  User Preferences
+    ├── GET  /api/user/prefs         → load per-user preferences from user-prefs.txt
+    └── POST /api/user/prefs/save   → persist per-user preferences to user-prefs.txt
     │
     │  Admin (requires ADMIN_PIN hash)
     ├── POST /api/admin/verify
@@ -854,6 +897,8 @@ No additional UAA-specific libraries are required. Spring Security's standard OA
 | Sessions lost after restage | Block storage not bound | Bind `greenplum-agent-storage` and restage |
 | PDF empty for follow-up messages | (Fixed in v55+) duplicate `msg-` IDs caused wrong element capture | Hard-refresh to load latest `app.js` |
 | Old UI after deploy | Browser cached old CSS / JS | Hard-refresh: Cmd/Ctrl + Shift + R |
+| User preferences not applying | Preferences saved but not reflected in responses | Check that `user-prefs.txt` exists on block storage; verify block storage is mounted |
+| "Error connecting to backend API" with details | Server error (e.g. SQL parse failure, model API error) | The message now shows the real server error — read it to diagnose |
 
 ### Logs
 

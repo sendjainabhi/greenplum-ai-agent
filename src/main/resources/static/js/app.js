@@ -121,6 +121,78 @@ function closeAdminModal() {
     document.getElementById('adminModal').style.display = 'none';
 }
 
+// =============================================================================
+// USER PREFERENCES
+// =============================================================================
+async function openUserPrefs() {
+    const ta       = document.getElementById('userPrefsInput');
+    const statusEl = document.getElementById('userPrefsSaveStatus');
+    const editBtn  = document.getElementById('userPrefsEditBtn');
+    const saveBtn  = document.getElementById('userPrefsSaveBtn');
+
+    if (statusEl) { statusEl.style.display = 'none'; statusEl.textContent = ''; }
+    if (ta)       { ta.readOnly = true; ta.style.opacity = '0.7'; ta.value = 'Loading...'; }
+    if (editBtn)  { editBtn.style.display = 'inline-block'; }
+    if (saveBtn)  { saveBtn.style.display = 'none'; }
+
+    document.getElementById('userPrefsModal').style.display = 'flex';
+
+    try {
+        const res  = await fetch('/api/user/prefs?userId=' + encodeURIComponent(CURRENT_USER_ID));
+        const data = await res.json();
+        if (ta) ta.value = data.success ? (data.prefs || '') : '';
+    } catch (_) {
+        if (ta) ta.value = '';
+    }
+}
+
+function editUserPrefs() {
+    const ta      = document.getElementById('userPrefsInput');
+    const editBtn = document.getElementById('userPrefsEditBtn');
+    const saveBtn = document.getElementById('userPrefsSaveBtn');
+    if (ta)      { ta.readOnly = false; ta.style.opacity = '1'; ta.focus(); }
+    if (editBtn) { editBtn.style.display = 'none'; }
+    if (saveBtn) { saveBtn.style.display = 'inline-block'; }
+}
+
+function closeUserPrefs() {
+    document.getElementById('userPrefsModal').style.display = 'none';
+}
+
+async function saveUserPrefs() {
+    if (!CURRENT_USER_ID) return;
+    const ta       = document.getElementById('userPrefsInput');
+    const statusEl = document.getElementById('userPrefsSaveStatus');
+    const editBtn  = document.getElementById('userPrefsEditBtn');
+    const saveBtn  = document.getElementById('userPrefsSaveBtn');
+    const val      = ta ? ta.value.trim() : '';
+
+    try {
+        const res  = await fetch('/api/user/prefs/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: CURRENT_USER_ID, prefs: val })
+        });
+        const data = await res.json();
+        if (statusEl) {
+            statusEl.textContent = data.success ? '✅ Preferences saved.' : ('❌ ' + (data.error || 'Save failed.'));
+            statusEl.style.color = data.success ? 'var(--online-color, #22c55e)' : '#ef4444';
+            statusEl.style.display = 'block';
+        }
+        if (data.success) {
+            if (ta)      { ta.readOnly = true; ta.style.opacity = '0.7'; }
+            if (editBtn) { editBtn.style.display = 'inline-block'; }
+            if (saveBtn) { saveBtn.style.display = 'none'; }
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = '❌ Could not reach server.';
+            statusEl.style.color = '#ef4444';
+            statusEl.style.display = 'block';
+        }
+    }
+}
+
 async function verifyAdminPin() {
     const pin   = document.getElementById('adminPinInput').value;
     const errEl = document.getElementById('adminAuthError');
@@ -940,7 +1012,11 @@ async function sendPrompt() {
         });
 
         if (!response.ok) {
-            throw new Error('Server returned HTTP ' + response.status);
+            let serverMsg = null;
+            try { const d = await response.json(); serverMsg = d?.response; } catch (_) {}
+            const err = new Error('Server returned HTTP ' + response.status);
+            err.serverMsg = serverMsg;
+            throw err;
         }
 
         const data = await response.json();
@@ -955,7 +1031,8 @@ async function sendPrompt() {
 
     } catch (error) {
         console.error('[sendPrompt] error:', error);
-        const errText = error.name === 'AbortError' ? '⚠️ Request cancelled by user.' : 'Error connecting to backend API.';
+        const errText = error.name === 'AbortError' ? '⚠️ Request cancelled by user.'
+                      : (error.serverMsg || 'Error connecting to backend API.');
         saveMessageToStorage(targetSessionId, errText, 'ai-message', false);
         if (currentSessionId === targetSessionId) {
             addMessageToDOM(errText, 'ai-message', false, new Date());
@@ -1384,7 +1461,7 @@ function updateHeaderStatus(state, customLabel) {
     const states = {
         'testing': ['status-testing', 'Testing...'],
         'running': ['status-testing', 'Running...'],
-        'online':  ['status-online',  'Connected'],
+        'online':  ['status-online',  CF_MODE && CF_MODEL_LABEL ? CF_MODEL_LABEL : 'Connected'],
         'partial': ['status-partial', 'Partial'],
         'offline': ['status-offline', 'Disconnected']
     };

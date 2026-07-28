@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 
-    <link rel="stylesheet" href="/css/style.css?v=61">
+    <link rel="stylesheet" href="/css/style.css?v=65">
 </head>
 <body>
 
@@ -46,7 +46,7 @@
             <!-- Right: user initials + icon action buttons -->
             <div class="header-actions">
                 <div class="hdr-user" id="hdrUserSection">
-                    <div class="hdr-avatar" id="hdrAvatar" title="">?</div>
+                    <div class="hdr-avatar" id="hdrAvatar" title="" onclick="openUserPrefs()" data-tip="My Preferences">?</div>
                 </div>
                 <span id="userEmailDisplay" style="display:none;"></span>
                 <button class="hdr-btn" id="themeToggleBtn" onclick="toggleTheme()" data-tip="Toggle Mode">🌙</button>
@@ -112,6 +112,31 @@
         <div class="modal-actions" style="justify-content:space-between;">
             <button class="btn-cancel" onclick="closeSaveFavModal()">Cancel</button>
             <button class="btn-save" onclick="confirmSaveFav()">Save Favourite</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== USER PREFERENCES MODAL ===================== -->
+<div class="modal-overlay" id="userPrefsModal" style="display: none;">
+    <div class="modal-content" style="max-width: 560px;">
+        <h3>👤 My Preferences</h3>
+        <p style="font-size:0.88em; color:#64748b; margin-bottom:14px;">
+            Personal instructions applied only to your sessions. These take priority over the admin global prompt.
+            Leave blank to use only the admin global settings.
+        </p>
+        <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <label style="margin:0;">Your Preferences</label>
+                <button id="userPrefsEditBtn" class="btn-cancel" onclick="editUserPrefs()" style="font-size:0.8em; padding:3px 10px;">✏️ Edit</button>
+                <button id="userPrefsSaveBtn" class="btn-save"   onclick="saveUserPrefs()" style="display:none; font-size:0.8em; padding:3px 10px;">Save</button>
+            </div>
+            <textarea id="userPrefsInput" rows="9" readonly
+                      style="padding:8px; border:1px solid var(--border-color); border-radius:4px; font-family:inherit; font-size:0.88em; resize:vertical; width:100%; box-sizing:border-box; background:var(--input-bg,#fff); color:var(--text-color,#111); opacity:0.7;"
+                      placeholder="Examples:&#10;• I cover the AMER region — default to AMER unless I specify otherwise&#10;• I work on the Spring Runtime team — focus on Spring product data&#10;• Default to FY25 data unless I specify a different period&#10;• Always include row counts at the bottom of every table&#10;• Format large numbers with commas (e.g. 1,234,567)&#10;• Show amounts in millions rounded to 2 decimal places&#10;• Do not show SQL queries in responses&#10;• Keep answers concise — no more than 3 sentences unless I ask for details&#10;• When showing rankings, always include top 5 and bottom 5"></textarea>
+        </div>
+        <div id="userPrefsSaveStatus" style="display:none; font-size:0.85em; margin:8px 0 4px;"></div>
+        <div class="modal-actions" style="justify-content:flex-end; margin-top:14px;">
+            <button class="btn-cancel" onclick="closeUserPrefs()">Close</button>
         </div>
     </div>
 </div>
@@ -313,6 +338,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=61"></script>
+<script src="/js/app.js?v=65"></script>
 </body>
 </html>

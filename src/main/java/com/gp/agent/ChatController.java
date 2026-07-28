@@ -224,8 +224,6 @@ public class ChatController {
             String activeMode = config.getOrDefault("activeMode",  "greenplum").toLowerCase();
             String omMcpUrl   = config.getOrDefault("omMcpUrl",    "");
             String omMcpAuth  = config.getOrDefault("omMcpAuth",   "");
-            String sysPrompt  = config.getOrDefault("systemPrompt","");
-
             java.util.function.BiFunction<String, String, String> chatFn = getOrBuildChatFn(
                     userId, provider, modelName, apiKey, baseUrl,
                     mcpUrl, mcpAuth, activeMode, omMcpUrl, omMcpAuth);
@@ -233,13 +231,14 @@ public class ChatController {
             String memoryId = userId + "::" + sessionId;
 
             String globalPrompt = loadGlobalPrompt();
+            String userPrefs    = loadUserPrefs(userId);
             StringBuilder promptBuilder = new StringBuilder(prompt);
             if (!globalPrompt.isEmpty()) {
                 promptBuilder.append("\n\n[GLOBAL POLICY INSTRUCTIONS — apply to all responses:\n")
                              .append(globalPrompt).append("]");
             }
-            if (!sysPrompt.trim().isEmpty()) {
-                promptBuilder.append("\n\n[USER CUSTOM INSTRUCTIONS:\n").append(sysPrompt).append("]");
+            if (!userPrefs.isEmpty()) {
+                promptBuilder.append("\n\n[USER PERSONAL PREFERENCES — these take priority over the Global Policy Instructions above:\n").append(userPrefs).append("]");
             }
             if ("both".equals(activeMode)) {
                 promptBuilder.append("\n\n[DUAL MODE: You have access to BOTH Greenplum database tools "
@@ -501,6 +500,41 @@ public class ChatController {
     }
 
     // -------------------------------------------------------------------------
+    // User preferences (per-user, stored as user-prefs.txt)
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/user/prefs")
+    ResponseEntity<Map<String, Object>> loadUserPrefsEndpoint(@RequestParam String userId) {
+        if (userId == null || userId.trim().isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        try {
+            String prefs = loadUserPrefs(userId);
+            return ResponseEntity.ok(Map.of("success", true, "prefs", prefs));
+        } catch (Exception e) {
+            log.error("[PREFS] Load failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/user/prefs/save")
+    ResponseEntity<Map<String, Object>> saveUserPrefsEndpoint(@RequestBody Map<String, String> request) {
+        String userId = request.getOrDefault("userId", "").trim();
+        String prefs  = request.getOrDefault("prefs",  "").trim();
+        if (userId.isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
+        try {
+            File f = getUserPrefsFile(userId);
+            f.getParentFile().mkdirs();
+            Files.writeString(f.toPath(), prefs, StandardCharsets.UTF_8);
+            log.info("[PREFS] Saved for user {} ({} chars)", userId, prefs.length());
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("[PREFS] Save failed for {}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Admin — allowed-users.txt (SSO access control)
     // -------------------------------------------------------------------------
 
@@ -682,6 +716,23 @@ public class ChatController {
             return gf.exists() ? Files.readString(gf.toPath(), StandardCharsets.UTF_8).trim() : "";
         } catch (Exception e) {
             log.warn("[ADMIN] Could not read global prompt: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    private File getUserPrefsFile(String userId) {
+        File dir = new File(GreenplumAgentApplication.resolveDataDir()
+                + File.separator + "users" + File.separator + userId);
+        dir.mkdirs();
+        return new File(dir, "user-prefs.txt");
+    }
+
+    private String loadUserPrefs(String userId) {
+        try {
+            File f = getUserPrefsFile(userId);
+            return f.exists() ? Files.readString(f.toPath(), StandardCharsets.UTF_8).trim() : "";
+        } catch (Exception e) {
+            log.warn("[PREFS] Could not read prefs for {}: {}", userId, e.getMessage());
             return "";
         }
     }
