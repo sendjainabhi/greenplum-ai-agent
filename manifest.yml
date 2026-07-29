@@ -18,5 +18,5 @@ applications:
   services:
     - gmd-authhub-sso          # Tanzu SSO / Broadcom AuthHub (p-identity plan: tanzu-authhub)
     - greenplum-agent-storage  # Block storage volume (1024 MB) mounted at /mnt/gp-data
-    - gmd-ai-prod-svc          # Tanzu GenAI AI model service
+    - ai-gmd-paid-svc          # Tanzu GenAI paid model service (ai-gmd-paid plan)
     - gp-mcp-greenplum         # Greenplum MCP server (gp-mcp-server.apps.tanzu.broadcom.net)

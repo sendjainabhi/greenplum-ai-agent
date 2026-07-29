@@ -338,8 +338,14 @@ cf create-service <block-storage-broker> <plan> greenplum-agent-storage
 #### 2c. AI Model
 
 ```bash
-# Tanzu GenAI marketplace service:
-cf create-service ai-models standard gmd-ai-prod-svc
+# List available plans:
+cf marketplace -e ai-models
+
+# Create from a Tanzu GenAI marketplace plan:
+cf create-service ai-models <plan> <service-name>
+
+# Example — paid plan:
+cf create-service ai-models ai-gmd-paid ai-gmd-paid-svc
 
 # OR a user-provided service for a custom OpenAI-compatible endpoint:
 cf create-user-provided-service gmd-ai-prod-svc \
@@ -350,6 +356,96 @@ cf create-user-provided-service gmd-ai-prod-svc \
     "modelName":  "qwen2.5:32b"
   }'
 ```
+
+If `modelName` is omitted the app auto-discovers the first non-embedding model from the `/models` endpoint. The resolved model name is shown in the app header after login.
+
+<details>
+<summary><strong>Switching to a different AI model plan (optional)</strong></summary>
+
+Use these steps whenever you need to upgrade to a new plan or swap model providers after the initial deploy.
+
+**1. Browse available plans**
+
+```bash
+cf marketplace -e ai-models
+```
+
+**2. Create the new service instance**
+
+```bash
+cf create-service ai-models <new-plan> <new-service-name>
+# Example:
+cf create-service ai-models ai-gmd-paid ai-gmd-paid-svc
+```
+
+**3. Inspect credentials (optional)**
+
+```bash
+# Create a service key to view the endpoint URL and available models:
+cf create-service-key <new-service-name> <key-name>
+cf service-key <new-service-name> <key-name>
+# Delete when done:
+cf delete-service-key <new-service-name> <key-name>
+```
+
+> The key shows `credentials.endpoint.openai_api_base`. Call `GET <base-url>/models` to confirm available model IDs.
+
+**4. Update `manifest.yml`** — replace the old service name with the new one in the `services:` list.
+
+**5. Push the app**
+
+```bash
+cf push
+# NOTE: cf push binds the new service but does NOT unbind the old one automatically.
+```
+
+**6. Unbind the old service**
+
+```bash
+# Verify what is currently bound:
+cf services
+
+# Unbind the old AI service:
+cf unbind-service greenplum-ai-agent <old-service-name>
+# Example:
+cf unbind-service greenplum-ai-agent gmd-ai-prod-svc
+```
+
+**7. Restage**
+
+```bash
+cf restage greenplum-ai-agent
+```
+
+> `cf restage` (not a second `cf push`) is required — it rebuilds the droplet with the current bound services so `VCAP_SERVICES` is clean.
+
+**8. Verify**
+
+```bash
+# Confirm only the new service is bound:
+cf services
+
+# Check model resolved in startup logs:
+cf logs greenplum-ai-agent --recent | grep -i "CF mode\|model\|discover"
+
+# Inspect VCAP to confirm old service is gone:
+cf env greenplum-ai-agent | grep -A5 "ai-models"
+```
+
+The model name appears in the app header immediately after login.
+
+**Troubleshooting — AI service**
+
+| Symptom | Likely cause | Fix |
+| :--- | :--- | :--- |
+| Header still shows old model after push | Old service still bound — both appear in VCAP_SERVICES | `cf unbind-service` old service → `cf restage` |
+| Model dot red after switch | CredHub credential not resolved — buildpack too old | Ensure `java_buildpack_offline` v4.90+; `cf restage` |
+| Model shown as `null` or `unknown` at startup | Credential format not recognised | Run `cf env greenplum-ai-agent` and verify the credentials block; check startup logs for `[VCAP]` lines |
+| Wrong model selected (e.g. an embedding model) | Multiple models returned by `/models`; wrong one picked first | Check startup logs for `[VCAP] discovered model:` to see which model was selected |
+| `Service instance not found` on create | Plan name typo or plan not available in this org/space | Re-run `cf marketplace -e ai-models` to confirm the exact plan name |
+| Old model still used after push | Two AI service bindings present; first one takes precedence | Unbind the old service and `cf restage` |
+
+</details>
 
 #### 2d. Greenplum MCP
 
@@ -729,7 +825,9 @@ public class DevSecurityConfig {
         return http.build();
     }
 }
-``` The `/logout` endpoint still exists and redirects to `/` so the Sign Out button works consistently in both profiles. The `CURRENT_USER_ID` defaults to `local-dev-user` (returned by `/api/auth/status` when `authentication == null`).
+```
+
+The `/logout` endpoint still exists and redirects to `/` so the Sign Out button works consistently in both profiles. In local dev mode `userId` defaults to `local-dev-user`.
 
 ---
 
@@ -888,17 +986,15 @@ No additional UAA-specific libraries are required. Spring Security's standard OA
 
 | Symptom | Likely cause | Fix |
 | :--- | :--- | :--- |
-| Redirect loop on login | SSO service not bound or `p-identity` credentials malformed | `cf bind-service` + `cf restage`; check startup for `[SSO]` log lines |
-| "Access Denied" after login | User email not in allowlist | Add email in Admin Panel or clear the allowlist to allow all |
-| Model dot red on startup | AI service not bound or CredHub resolution failed | `cf bind-service` + `cf restage`; check for `[CF] CF mode active` log |
-| Greenplum dot green but queries fail | Port 5432 blocked by firewall | Open firewall from MCP app to DB; dot only checks MCP HTTP, not DB port |
-| Allowlist save error (`/mnt/gp-data/...`) | Block storage not mounted at `AGENT_DATA_DIR` path | Bind `greenplum-agent-storage`; app reads actual path from `volume_mounts` |
-| Settings button visible in CF | `cfMode` detection failed | Ensure `VCAP_SERVICES` is set; check `VcapServicesConfig` init logs |
-| Sessions lost after restage | Block storage not bound | Bind `greenplum-agent-storage` and restage |
-| PDF empty for follow-up messages | (Fixed in v55+) duplicate `msg-` IDs caused wrong element capture | Hard-refresh to load latest `app.js` |
-| Old UI after deploy | Browser cached old CSS / JS | Hard-refresh: Cmd/Ctrl + Shift + R |
-| User preferences not applying | Preferences saved but not reflected in responses | Check that `user-prefs.txt` exists on block storage; verify block storage is mounted |
-| "Error connecting to backend API" with details | Server error (e.g. SQL parse failure, model API error) | The message now shows the real server error — read it to diagnose |
+| Redirect loop on login | SSO service not bound or credentials malformed | `cf bind-service` + `cf restage`; check startup logs for `[SSO]` markers |
+| "Access Denied" after login | User email not in allowlist | Add email via the Admin Panel, or clear the allowlist to allow all users |
+| Model dot red on startup | AI service not bound or credential resolution failed | Bind the AI service and `cf restage`; check logs for `[CF] CF mode active` |
+| Greenplum dot green but queries fail | Port 5432 blocked by firewall | Open firewall from the MCP app to the database; the dot only checks MCP HTTP reachability, not database connectivity |
+| Allowlist save error | Block storage service not bound | Bind `greenplum-agent-storage` and `cf restage` |
+| Sessions lost after restage | Block storage service not bound | Bind `greenplum-agent-storage` and `cf restage` |
+| Old UI after deploy | Browser cached previous CSS / JS | Hard-refresh: Cmd/Ctrl + Shift + R |
+| User preferences not applying | Block storage not mounted or `user-prefs.txt` absent | Verify `greenplum-agent-storage` is bound and the app has restarted since binding |
+| "Error connecting to backend API" with a specific message | Server-side error (e.g. SQL parse failure, model timeout) | Read the error detail — it shows the exact failure returned by the server |
 
 ### Logs
 
