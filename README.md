@@ -14,11 +14,12 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 3. [Example Prompts](#example-prompts)
 4. [MCP Capabilities](#mcp-capabilities)
 5. [Admin Panel & User Preferences](#admin-panel)
-6. [Platform Services](#platform-services)
-7. [Deployment](#deployment)
-8. [Architecture](#architecture)
-9. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
-10. [Troubleshooting](#troubleshooting)
+6. [Role-Based Access Control](#role-based-access-control)
+7. [Platform Services](#platform-services)
+8. [Deployment](#deployment)
+9. [Architecture](#architecture)
+10. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -27,8 +28,9 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 1. User opens the app URL → redirected to Broadcom AuthHub SSO (Okta) for authentication
 2. On successful login the JWT `sub` claim becomes the user ID for per-user session isolation
 3. At startup the app reads all AI model, MCP, and storage credentials from `VCAP_SERVICES` — nothing to configure manually
-4. Admins can restrict access to specific Broadcom email addresses via the Admin Panel allowlist
-5. Each user's sessions, AI memory, and saved prompts are stored independently on block storage
+4. Admins can restrict access to specific Broadcom email addresses and assign each user a role
+5. Every chat request is tagged with the user's role — the AI enforces data access boundaries defined in the global prompt
+6. Each user's sessions, AI memory, and saved prompts are stored independently on block storage
 
 **Header status indicators:**
 
@@ -93,9 +95,18 @@ Each user can set personal AI instructions that apply only to their sessions and
 
 ### 🔐 Admin Panel
 
-- Global pre-prompt — applies to all users, takes effect immediately without restart
-- Email-based access control — add/remove users, view current list
-- Protected by an admin PIN
+- Three-tab interface protected by an admin PIN
+- **Global Prompt** — pre-training instructions applied to all users; define role boundaries here
+- **Access Control** — add/remove users with a mandatory role assignment per user
+- **Roles** — create/delete custom roles and reassign roles to existing users
+
+### 🎭 Role-Based Access Control
+
+- Global admin creates named roles and defines each role's data boundaries in the Global Prompt
+- Every chat request is injected with `[USER ROLE: X]` so the AI enforces boundaries automatically
+- **ADMIN** is the only built-in role and grants full access — it cannot be deleted
+- Users with no assigned role default to ADMIN (backward compatible)
+- Permanent admin accounts are protected at the CF environment level — cannot be overridden from the UI
 
 ### 🎨 UI
 
@@ -156,25 +167,51 @@ Schema introspection (`information_schema.columns`) is performed before querying
 
 ## Admin Panel
 
-Access: click the **🔐** button in the header and enter the `ADMIN_PIN`.
+Access: click the **🔐** button in the header (visible only to users with the `ADMIN` role) and enter the `ADMIN_PIN`.
 
 ### Prompt Priority Order
 
 Instructions are applied in this order on every chat request — later entries take priority:
 
 1. **System prompt** (`system-prompt.txt`) — embedded in the JAR; defines core AI behaviour and rules
-2. **Admin global prompt** (`global-prompt.txt`) — set via the Admin Panel; applies to all users
-3. **User personal preferences** (`users/{userId}/user-prefs.txt`) — set per-user via the initials button; overrides global
+2. **User role tag** — `[USER ROLE: X]` injected automatically based on the user's assigned role
+3. **Admin global prompt** (`global-prompt.txt`) — set via the Admin Panel; applies to all users; contains role boundary definitions
+4. **User personal preferences** (`users/{userId}/user-prefs.txt`) — set per-user via the initials button; overrides global
 
-### Global Pre-Training Prompt
+### Tab 1 — Global Prompt
 
-A system instruction appended to every chat request for every user. Useful for enforcing data governance rules, restricting topic scope, or providing shared database context (e.g. schema rules, default filters).
+A system instruction appended to every chat request for every user. Define role boundaries here alongside general data governance rules.
 
 - Stored at `{data-dir}/global-prompt.txt` on block storage; read fresh on every request
 - Click **✏️ Edit** to modify, **Save** to apply immediately (no restart needed)
 - Leave blank to disable
 
-### Access Control — Allowed Users
+**Sample structure with role definitions:**
+
+```
+==============================
+ROLE-BASED ACCESS CONTROL
+==============================
+Apply the rules below strictly based on [USER ROLE: X].
+
+--- ROLE: ADMIN ---
+Full access to all schemas, tables, and data.
+
+--- ROLE: READ_ONLY ---
+SELECT queries only. Never generate INSERT, UPDATE, DELETE, DROP, or ALTER.
+
+--- ROLE: AMER_ANALYST ---
+Only query data where region = 'AMER'. Refuse requests for other regions.
+
+--- ROLE: <YOUR_CUSTOM_ROLE> ---
+[Define data scope and restrictions here]
+
+==============================
+[General rules below — apply to all roles]
+==============================
+```
+
+### Tab 2 — Access Control
 
 File-based email allowlist stored at `{data-dir}/allowed-users.txt`.
 
@@ -184,9 +221,67 @@ File-based email allowlist stored at `{data-dir}/allowed-users.txt`.
 | File has entries | Only listed email addresses are admitted; others get a 403 |
 
 **UI actions:**
-- Type an email address and click **Add** (or press Enter) — validates format and prevents duplicates; saves automatically
-- Click **👁 Show User List** to view current entries
-- Click **✕** next to any entry to remove it — saves automatically
+- Enter an email, select a role from the dropdown (required), click **Add** — saves automatically
+- Click **👁 Show User List** to view current entries with their assigned roles
+- Change a user's role inline via the role dropdown next to their email — saves immediately
+- Click **✕** to remove a user — saves automatically
+
+### Tab 3 — Roles
+
+Manage custom role names and assign roles to all known users.
+
+- **ADMIN** is the only pre-built role — it cannot be deleted and grants full access
+- Add new roles (e.g. `READ_ONLY`, `AMER_ANALYST`, `EMEA_VIEWER`) using the text field
+- Role names are uppercase alphanumeric + underscore only
+- A role cannot be deleted while it is assigned to any user — reassign first
+- **User Role Assignments** panel shows every user from the allowlist and known-users with an inline dropdown to change their role
+
+---
+
+## Role-Based Access Control
+
+### How It Works
+
+Every chat request is automatically prefixed with `[USER ROLE: X]` before the global prompt is appended. The AI reads both the role tag and the role definitions in the global prompt and applies the matching access rules.
+
+```
+User message
+  + [USER ROLE: AMER_ANALYST]
+  + [GLOBAL POLICY INSTRUCTIONS: ... role definitions ...]
+  + [USER PERSONAL PREFERENCES: ...]
+         ↓
+     AI enforces AMER_ANALYST boundaries
+```
+
+### Default Behaviour
+
+| Condition | Effective Role |
+| :--- | :--- |
+| No role assigned to user | `ADMIN` (full access) |
+| `user-role-map.txt` absent | `ADMIN` for all users |
+| User is a permanent admin | Always `ADMIN` — cannot be overridden from the UI |
+
+### Permanent Admins
+
+Certain accounts can be designated as permanent admins via the `PERMANENT_ADMIN_EMAILS` env var in `manifest.yml`. Their role is always `ADMIN` regardless of what is stored in `user-role-map.txt`. This protects against accidental lockout.
+
+```yaml
+env:
+  PERMANENT_ADMIN_EMAILS: first.admin@your-company.com,second.admin@your-company.com
+```
+
+> Changing permanent admins requires editing `manifest.yml` and running `mvn clean package && cf push`.
+
+### Storage Files
+
+| File | Content |
+| :--- | :--- |
+| `roles-list.txt` | Custom role names (one per line); `ADMIN` is always implicit |
+| `user-role-map.txt` | `email = ROLE` entries; one per line |
+
+### Admin Panel Visibility
+
+The 🔐 Admin button in the header is hidden for non-ADMIN users. It is shown only when `/api/user/current-role` returns `ADMIN` at login time.
 
 ---
 
@@ -235,8 +330,10 @@ CF block storage volume service. Stores all persistent data for the app. The app
 
 | Path | Content |
 | :--- | :--- |
-| `global-prompt.txt` | Admin global pre-training prompt |
+| `global-prompt.txt` | Admin global pre-training prompt (includes role definitions) |
 | `allowed-users.txt` | Email allowlist for access control |
+| `roles-list.txt` | Custom role names; `ADMIN` is always implicit |
+| `user-role-map.txt` | `email = ROLE` per line; role assigned to each user |
 | `users/{userId}/config.json` | Per-user AI model and MCP settings |
 | `users/{userId}/sessions.json` | Per-user chat session history |
 | `users/{userId}/favourites.json` | Per-user saved favourite prompts |
@@ -491,6 +588,7 @@ applications:
     SPRING_PROFILES_ACTIVE: cloud
     JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
     ADMIN_PIN: <your-admin-pin>
+    PERMANENT_ADMIN_EMAILS: first.admin@your-company.com,second.admin@your-company.com
     AGENT_DATA_DIR: /mnt/gp-data        # hint only; actual path read from VCAP volume_mounts
   services:
     - gmd-authhub-sso                   # Tanzu AuthHub SSO (p-identity)
@@ -568,15 +666,21 @@ Browser  (index.html · app.js · style.css)
     ├── POST /api/sessions/save
     └── POST /api/memory/clear
     │
-    │  User Preferences
-    ├── GET  /api/user/prefs         → load per-user preferences from user-prefs.txt
-    └── POST /api/user/prefs/save   → persist per-user preferences to user-prefs.txt
+    │  User
+    ├── GET  /api/user/prefs              → load per-user preferences
+    ├── POST /api/user/prefs/save         → persist per-user preferences
+    └── GET  /api/user/current-role       → role for current authenticated user (drives admin button visibility)
     │
     │  Admin (requires ADMIN_PIN hash)
     ├── POST /api/admin/verify
-    ├── POST /api/admin/save         → global prompt
+    ├── POST /api/admin/save              → global prompt
     ├── GET  /api/admin/allowlist
-    └── POST /api/admin/allowlist    → access control list
+    ├── POST /api/admin/allowlist         → access control list
+    ├── GET  /api/admin/roles             → list all roles
+    ├── POST /api/admin/roles/save        → create a role
+    ├── POST /api/admin/roles/delete      → delete a role
+    ├── GET  /api/admin/user-roles        → all users with assigned roles
+    └── POST /api/admin/user-roles/save   → assign or update a user's role
     │
     │  SSO
     ├── GET  /oauth2/authorization/sso → redirect to AuthHub

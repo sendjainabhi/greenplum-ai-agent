@@ -103,6 +103,8 @@ async function hashPin(pin) {
 }
 
 let adminPinHashInSession = null;
+let _roles = [];          // loaded after PIN verify and on Roles tab open
+let _userRolesCache = {}; // email → role, loaded for the allowlist display
 
 function openAdminModal() {
     adminPinHashInSession = null;
@@ -119,6 +121,24 @@ function openAdminModal() {
 
 function closeAdminModal() {
     document.getElementById('adminModal').style.display = 'none';
+}
+
+function switchAdminTab(tab) {
+    ['Prompt', 'Access', 'Roles'].forEach(t => {
+        const panel = document.getElementById('adminPanel' + t);
+        const btn   = document.getElementById('adminTab'   + t);
+        if (panel) panel.style.display = t === tab ? 'block' : 'none';
+        if (btn) {
+            btn.style.borderBottomColor = t === tab ? 'var(--primary-color)' : 'transparent';
+            btn.style.color      = t === tab ? 'var(--primary-color)' : 'var(--muted-text)';
+            btn.style.fontWeight = t === tab ? '600' : 'normal';
+        }
+    });
+    if (tab === 'Access') {
+        populateRoleDropdowns();
+    } else if (tab === 'Roles') {
+        loadRolesTab();
+    }
 }
 
 // =============================================================================
@@ -237,10 +257,10 @@ async function verifyAdminPin() {
         document.getElementById('adminSaveResult').style.display = 'none';
         document.getElementById('adminAuthSection').style.display = 'none';
         document.getElementById('adminEditorSection').style.display = 'block';
-        // Load and show the allowlist
-        await loadAllowlist();
-        const allowlistSection = document.getElementById('allowlistSection');
-        if (allowlistSection) allowlistSection.style.display = 'block';
+        // Start on Prompt tab; load allowlist + roles in background
+        switchAdminTab('Prompt');
+        loadAllowlist();
+        loadRolesList();
 
     } catch (e) {
         errEl.className   = 'test-result test-error';
@@ -380,25 +400,30 @@ function onAllowlistEmailInput() {
 }
 
 async function addAllowlistEmail() {
-    const input   = document.getElementById('allowlistEmailInput');
+    const input    = document.getElementById('allowlistEmailInput');
+    const roleSel  = document.getElementById('allowlistRoleSelect');
     const resultEl = document.getElementById('allowlistAddResult');
-    const email   = (input.value || '').trim().toLowerCase();
-    resultEl.style.display = 'none';
+    const email    = (input ? input.value : '').trim().toLowerCase();
+    const role     = roleSel ? roleSel.value : '';
+    if (resultEl) resultEl.style.display = 'none';
 
     if (!email) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        resultEl.className = 'test-result test-error';
-        resultEl.textContent = '❌ Enter a valid email address.';
-        resultEl.style.display = 'block'; return;
+        if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ Enter a valid email address.'; resultEl.style.display = 'block'; }
+        return;
+    }
+    if (!role) {
+        if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ Select a role for this user.'; resultEl.style.display = 'block'; }
+        return;
     }
     if (_allowlistEmails.includes(email)) {
-        resultEl.className = 'test-result test-error';
-        resultEl.textContent = '⚠️ ' + email + ' is already in the list.';
-        resultEl.style.display = 'block'; return;
+        if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '⚠️ ' + email + ' is already in the list.'; resultEl.style.display = 'block'; }
+        return;
     }
     _allowlistEmails.push(email);
-    input.value = '';
+    if (input) input.value = '';
     await _saveAllowlist();
+    await saveUserRole(email, role);
     // Re-render if list is visible
     const listEl = document.getElementById('allowlistUserList');
     if (listEl && listEl.style.display !== 'none') renderAllowlistUI();
@@ -417,19 +442,37 @@ function renderAllowlistUI() {
         listEl.innerHTML = '<p style="font-size:0.85em;color:var(--muted-text);margin:0;">No users added — all authenticated BC users have access.</p>';
         return;
     }
-    listEl.innerHTML = _allowlistEmails.map(email =>
-        `<div class="allowlist-item">
-            <span>${email}</span>
+    const roleOptions = (_roles.length ? _roles : ['ADMIN'])
+        .map(r => `<option value="${r}">${r}</option>`).join('');
+    listEl.innerHTML = _allowlistEmails.map(email => {
+        const currentRole = _userRolesCache[email] || '';
+        const opts = `<option value="">— role —</option>` +
+            (_roles.length ? _roles : ['ADMIN']).map(r =>
+                `<option value="${r}"${r === currentRole ? ' selected' : ''}>${r}</option>`
+            ).join('');
+        return `<div class="allowlist-item" style="gap:6px;">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.88em;" title="${email}">${email}</span>
+            <select onchange="saveUserRole('${email}',this.value).then(ok=>{this.style.borderColor=ok?'#22c55e':'#ef4444';setTimeout(()=>this.style.borderColor='',1500);})"
+                    style="padding:3px 6px;border:1px solid var(--border-subtle);border-radius:4px;font-size:0.8em;background:var(--surface-bg,#fff);color:var(--text-color,#111);min-width:110px;">${opts}</select>
             <button class="allowlist-item-remove" onclick="removeAllowlistEmail('${email}')" title="Remove">✕</button>
-        </div>`
-    ).join('');
+        </div>`;
+    }).join('');
 }
 
-function toggleAllowlistView() {
+async function toggleAllowlistView() {
     const listEl = document.getElementById('allowlistUserList');
     const btn    = document.getElementById('allowlistViewBtn');
     if (!listEl) return;
     if (listEl.style.display === 'none') {
+        // Ensure roles and role assignments are loaded before rendering dropdowns
+        if (_roles.length === 0) await loadRolesList();
+        if (adminPinHashInSession) {
+            try {
+                const res  = await fetch('/api/admin/user-roles?pinHash=' + encodeURIComponent(adminPinHashInSession));
+                const data = await res.json();
+                if (data.success) (data.assignments || []).forEach(a => { _userRolesCache[a.email] = a.role; });
+            } catch (_) {}
+        }
         renderAllowlistUI();
         listEl.style.display = 'block';
         if (btn) btn.textContent = '🙈 Hide User List';
@@ -437,6 +480,147 @@ function toggleAllowlistView() {
         listEl.style.display = 'none';
         if (btn) btn.textContent = '👁 Show User List';
     }
+}
+
+// =============================================================================
+// ROLES — management (admin)
+// =============================================================================
+
+async function loadRolesList() {
+    if (!adminPinHashInSession) return;
+    try {
+        const res  = await fetch('/api/admin/roles?pinHash=' + encodeURIComponent(adminPinHashInSession));
+        const data = await res.json();
+        if (data.success) {
+            _roles = data.roles || ['ADMIN'];
+            populateRoleDropdowns();
+        }
+    } catch (_) {}
+}
+
+function populateRoleDropdowns() {
+    const sel = document.getElementById('allowlistRoleSelect');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— select role —</option>' +
+        _roles.map(r => `<option value="${r}"${r === current ? ' selected' : ''}>${r}</option>`).join('');
+}
+
+async function loadRolesTab() {
+    await loadRolesList();
+    renderRolesUI();
+    await loadUserRoleAssignments();
+}
+
+function renderRolesUI() {
+    const el = document.getElementById('rolesListEl');
+    if (!el) return;
+    el.innerHTML = (_roles.length === 0 ? ['ADMIN'] : _roles).map(role => {
+        const isAdmin = role === 'ADMIN';
+        return `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--sidebar-bg);border:1px solid var(--border-subtle);border-radius:14px;padding:3px 10px;font-size:0.82em;color:var(--muted-text);">
+            ${role}
+            ${isAdmin ? '' : `<button onclick="deleteRole('${role}')" title="Delete" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:0.9em;padding:0 2px;line-height:1;">✕</button>`}
+        </span>`;
+    }).join('');
+}
+
+async function addRole() {
+    const input    = document.getElementById('newRoleInput');
+    const resultEl = document.getElementById('rolesActionResult');
+    const role     = (input ? input.value : '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    if (resultEl) resultEl.style.display = 'none';
+    if (!role) return;
+    if (_roles.includes(role)) {
+        if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '⚠️ Role already exists.'; resultEl.style.display = 'block'; }
+        return;
+    }
+    try {
+        const res  = await fetch('/api/admin/roles/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, role })
+        });
+        const data = await res.json();
+        if (data.success) {
+            _roles = data.roles || _roles;
+            if (input) input.value = '';
+            renderRolesUI();
+            populateRoleDropdowns();
+            if (resultEl) { resultEl.className = 'test-result test-success'; resultEl.textContent = '✅ Role "' + role + '" created.'; resultEl.style.display = 'block'; setTimeout(() => { if (resultEl) resultEl.style.display = 'none'; }, 2500); }
+        } else {
+            if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ ' + (data.error || 'Failed.'); resultEl.style.display = 'block'; }
+        }
+    } catch (_) {
+        if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ Could not reach server.'; resultEl.style.display = 'block'; }
+    }
+}
+
+async function deleteRole(role) {
+    const resultEl = document.getElementById('rolesActionResult');
+    if (resultEl) resultEl.style.display = 'none';
+    try {
+        const res  = await fetch('/api/admin/roles/delete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, role })
+        });
+        const data = await res.json();
+        if (data.success) {
+            _roles = data.roles || _roles;
+            renderRolesUI();
+            populateRoleDropdowns();
+            if (resultEl) { resultEl.className = 'test-result test-success'; resultEl.textContent = '✅ Role "' + role + '" deleted.'; resultEl.style.display = 'block'; setTimeout(() => { if (resultEl) resultEl.style.display = 'none'; }, 2500); }
+        } else {
+            if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ ' + (data.error || 'Failed.'); resultEl.style.display = 'block'; }
+        }
+    } catch (_) {}
+}
+
+async function saveUserRole(email, role) {
+    if (!adminPinHashInSession) return false;
+    try {
+        const res  = await fetch('/api/admin/user-roles/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, email, role })
+        });
+        const data = await res.json();
+        if (data.success) _userRolesCache[email] = role;
+        return data.success;
+    } catch (_) { return false; }
+}
+
+async function loadUserRoleAssignments() {
+    const el = document.getElementById('userRoleAssignments');
+    if (!el || !adminPinHashInSession) return;
+    el.innerHTML = '<p style="font-size:0.85em;color:var(--muted-text);">Loading...</p>';
+    try {
+        const res  = await fetch('/api/admin/user-roles?pinHash=' + encodeURIComponent(adminPinHashInSession));
+        const data = await res.json();
+        if (data.success) {
+            (data.assignments || []).forEach(a => { _userRolesCache[a.email] = a.role; });
+            renderUserRoleAssignments(data.assignments || []);
+        } else {
+            el.innerHTML = '<p style="font-size:0.85em;color:#ef4444;">Failed to load assignments.</p>';
+        }
+    } catch (_) {
+        el.innerHTML = '<p style="font-size:0.85em;color:#ef4444;">Could not reach server.</p>';
+    }
+}
+
+function renderUserRoleAssignments(assignments) {
+    const el = document.getElementById('userRoleAssignments');
+    if (!el) return;
+    if (!assignments.length) {
+        el.innerHTML = '<p style="font-size:0.85em;color:var(--muted-text);margin:0;">No users found yet. Users appear here after their first login.</p>';
+        return;
+    }
+    el.innerHTML = assignments.map(({email, role}) => `
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border-subtle);">
+            <span style="flex:1;font-size:0.85em;color:var(--text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${email}">${email}</span>
+            <select onchange="saveUserRole('${email}',this.value).then(ok=>{this.style.borderColor=ok?'#22c55e':'#ef4444';setTimeout(()=>this.style.borderColor='',1500);})"
+                    style="padding:4px 6px;border:1px solid var(--border-subtle);border-radius:4px;font-size:0.82em;background:var(--surface-bg,#fff);color:var(--text-color,#111);min-width:130px;">
+                ${_roles.map(r => `<option value="${r}"${r === role ? ' selected' : ''}>${r}</option>`).join('')}
+            </select>
+        </div>`
+    ).join('');
 }
 
 // =============================================================================
@@ -612,6 +796,20 @@ window.onload = async function () {
 
         const userEmailEl = document.getElementById('userEmailDisplay');
         if (userEmailEl) userEmailEl.textContent = USER_EMAIL;
+
+        // Show admin button only for ADMIN role users (or unassigned = defaults to ADMIN)
+        try {
+            const roleRes  = await fetch('/api/user/current-role');
+            const roleData = await roleRes.json();
+            if (roleData.success && roleData.role === 'ADMIN') {
+                const adminBtn = document.getElementById('adminPanelBtn');
+                if (adminBtn) adminBtn.style.display = '';
+            }
+        } catch (_) {
+            // If role check fails, show the button to avoid locking admins out
+            const adminBtn = document.getElementById('adminPanelBtn');
+            if (adminBtn) adminBtn.style.display = '';
+        }
 
         bootApp();
     } catch (e) {
@@ -1163,15 +1361,60 @@ function addMessageToDOM(text, className, isMarkdown, timestamp) {
     }
 
     if (className === 'ai-message' && !text.includes('⚠️ Request cancelled') && !text.includes('Error connecting')) {
-        const downloadBtn    = document.createElement('button');
-        downloadBtn.innerHTML = '⬇ Export PDF';
-        downloadBtn.style.cssText = 'margin-top:6px; background:var(--new-chat-btn-bg); border:1px solid var(--border-subtle); color:var(--muted-text); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8em; align-self:flex-start; transition:all 0.12s ease; box-shadow:0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06); transform:translateY(0);';
-        downloadBtn.onmouseenter = () => { downloadBtn.style.transform='translateY(1px)'; downloadBtn.style.boxShadow='0 1px 0 rgba(0,0,0,0.1)'; };
-        downloadBtn.onmouseleave = () => { downloadBtn.style.transform='translateY(0)'; downloadBtn.style.boxShadow='0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06)'; };
-        downloadBtn.onmousedown  = () => { downloadBtn.style.transform='translateY(2px)'; downloadBtn.style.boxShadow='inset 0 1px 3px rgba(0,0,0,0.15)'; };
-        downloadBtn.onmouseup    = () => { downloadBtn.style.transform='translateY(0)'; downloadBtn.style.boxShadow='0 2px 0 rgba(0,0,0,0.1),0 2px 6px rgba(0,0,0,0.06)'; };
-        downloadBtn.onclick   = () => exportSinglePDF(uniqueId, downloadBtn);
-        wrapperDiv.appendChild(downloadBtn);
+        const hasTables  = wrapperDiv.querySelectorAll('table').length > 0;
+        const noTableTip = 'No table data in this response';
+
+        const dropWrap = document.createElement('div');
+        dropWrap.style.cssText = 'position:relative; display:inline-block; margin-top:6px;';
+
+        const triggerBtn = document.createElement('button');
+        triggerBtn.innerHTML = '⬇ Export ▾';
+        triggerBtn.style.cssText = 'background:var(--surface-bg); border:1px solid var(--border-subtle); color:var(--muted-text); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.72em; transition:opacity 0.1s; opacity:0.75;';
+        triggerBtn.onmouseenter = () => triggerBtn.style.opacity = '1';
+        triggerBtn.onmouseleave = () => triggerBtn.style.opacity = '0.75';
+
+        const menu = document.createElement('div');
+        menu.className = 'export-dd-menu';
+        menu.style.cssText = 'position:absolute; top:calc(100% + 4px); left:0; z-index:200; background:var(--surface-bg); border:1px solid var(--border-subtle); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.18); min-width:150px; display:none; overflow:hidden;';
+
+        const mkItem = (label, enabled) => {
+            const it = document.createElement('button');
+            it.innerHTML = label;
+            it.style.cssText = `display:block; width:100%; padding:7px 14px; text-align:left; background:transparent; border:none; border-bottom:1px solid var(--border-subtle); cursor:${enabled ? 'pointer' : 'not-allowed'}; font-size:0.8em; color:var(--muted-text); opacity:${enabled ? '1' : '0.4'}; transition:background 0.1s;`;
+            it.disabled = !enabled;
+            if (!enabled) it.title = noTableTip;
+            if (enabled) {
+                it.onmouseenter = () => it.style.background = 'var(--sidebar-bg)';
+                it.onmouseleave = () => it.style.background = 'transparent';
+            }
+            return it;
+        };
+
+        const pdfItem  = mkItem('⬇ Export as PDF', true);
+        const csvItem  = mkItem('⬇ Export as CSV', hasTables);
+        const xlsItem  = mkItem('⬇ Export as XLS', hasTables);
+        const copyItem = mkItem('⎘ Copy Table', hasTables);
+        copyItem.style.borderBottom = 'none';
+
+        pdfItem.onclick  = () => { closeExportDropdowns(); exportSinglePDF(uniqueId, triggerBtn); };
+        if (hasTables) {
+            csvItem.onclick  = () => { closeExportDropdowns(); exportCSV(uniqueId, triggerBtn); };
+            xlsItem.onclick  = () => { closeExportDropdowns(); exportXLS(uniqueId, triggerBtn); };
+            copyItem.onclick = () => { closeExportDropdowns(); copyTableTSV(uniqueId, triggerBtn); };
+        }
+
+        [pdfItem, csvItem, xlsItem, copyItem].forEach(it => menu.appendChild(it));
+
+        triggerBtn.onclick = e => {
+            e.stopPropagation();
+            const isOpen = menu.style.display === 'block';
+            closeExportDropdowns();
+            if (!isOpen) menu.style.display = 'block';
+        };
+
+        dropWrap.appendChild(triggerBtn);
+        dropWrap.appendChild(menu);
+        wrapperDiv.appendChild(dropWrap);
     }
 
     messagesDiv.appendChild(wrapperDiv);
@@ -1317,6 +1560,97 @@ function exportSinglePDF(wrapperId, btnElement) {
         btnElement.innerHTML = originalText;
         btnElement.disabled  = false;
     }
+}
+
+// =============================================================================
+// TABLE EXPORT — CSV / XLS / COPY AS TSV
+// =============================================================================
+
+function closeExportDropdowns() {
+    document.querySelectorAll('.export-dd-menu').forEach(m => m.style.display = 'none');
+}
+document.addEventListener('click', closeExportDropdowns);
+
+function extractTables(wrapperId) {
+    const el = document.getElementById(wrapperId);
+    if (!el) return [];
+    const result = [];
+    el.querySelectorAll('table').forEach(table => {
+        const rows = [];
+        const headers = [...table.querySelectorAll('thead tr th')].map(th => th.innerText.trim());
+        if (headers.length) rows.push(headers);
+        table.querySelectorAll('tbody tr').forEach(tr => {
+            const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
+            if (cells.length) rows.push(cells);
+        });
+        if (rows.length) result.push(rows);
+    });
+    return result;
+}
+
+function getExportFilename(wrapperId, ext) {
+    const el = document.getElementById(wrapperId);
+    let userWrapper = el ? el.previousElementSibling : null;
+    while (userWrapper && !userWrapper.classList.contains('wrapper-user')) {
+        userWrapper = userWrapper.previousElementSibling;
+    }
+    const queryText = userWrapper?.querySelector('.message')?.innerText?.trim() || 'data';
+    const safeName  = queryText.replace(/[^a-zA-Z0-9\s]/g, '').trim().substring(0, 40).trim().replace(/\s+/g, '-') || 'data';
+    const dateStr   = new Date().toISOString().slice(0, 10);
+    return `greenplum-${safeName}-${dateStr}.${ext}`;
+}
+
+function copyTableTSV(wrapperId, btn) {
+    const tables = extractTables(wrapperId);
+    if (!tables.length) return;
+    const tsv  = tables.map(rows => rows.map(row => row.join('\t')).join('\n')).join('\n\n');
+    const orig = btn.innerHTML;
+    const done = () => { btn.innerHTML = orig; btn.disabled = false; };
+    const mark = () => { btn.innerHTML = '✅ Copied!'; btn.disabled = true; setTimeout(done, 2000); };
+    navigator.clipboard.writeText(tsv).then(mark).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = tsv; ta.style.cssText = 'position:fixed;opacity:0;';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        mark();
+    });
+}
+
+function exportCSV(wrapperId, btn) {
+    const tables = extractTables(wrapperId);
+    if (!tables.length) return;
+    const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+    const csv = tables.map((rows, i) =>
+        (tables.length > 1 ? `# Table ${i + 1}\n` : '') + rows.map(r => r.map(esc).join(',')).join('\n')
+    ).join('\n\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = getExportFilename(wrapperId, 'csv'); a.click();
+    URL.revokeObjectURL(url);
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✅ Downloaded!'; btn.disabled = true;
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 2000);
+}
+
+function exportXLS(wrapperId, btn) {
+    if (typeof XLSX === 'undefined') {
+        btn.innerHTML = '❌ Library not loaded';
+        setTimeout(() => { btn.innerHTML = '⬇ XLS'; btn.disabled = false; }, 2500);
+        return;
+    }
+    const tables = extractTables(wrapperId);
+    if (!tables.length) return;
+    const wb = XLSX.utils.book_new();
+    tables.forEach((rows, i) => {
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const colWidths = rows[0]?.map((_, ci) => ({ wch: Math.max(...rows.map(r => (r[ci] || '').length), 8) }));
+        if (colWidths) ws['!cols'] = colWidths;
+        XLSX.utils.book_append_sheet(wb, ws, tables.length > 1 ? `Sheet${i + 1}` : 'Data');
+    });
+    XLSX.writeFile(wb, getExportFilename(wrapperId, 'xlsx'));
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✅ Downloaded!'; btn.disabled = true;
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 2000);
 }
 
 // =============================================================================

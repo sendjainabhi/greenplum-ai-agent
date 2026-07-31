@@ -8,11 +8,12 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 
-    <link rel="stylesheet" href="/css/style.css?v=65">
+    <link rel="stylesheet" href="/css/style.css?v=70">
 </head>
 <body>
 
@@ -51,7 +52,7 @@
                 <span id="userEmailDisplay" style="display:none;"></span>
                 <button class="hdr-btn" id="themeToggleBtn" onclick="toggleTheme()" data-tip="Toggle Mode">🌙</button>
                 <button class="hdr-btn" id="settingsBtn" onclick="openSettings()" data-tip="Settings">⚙️</button>
-                <button class="hdr-btn" onclick="openAdminModal()" data-tip="Admin Panel">🔐</button>
+                <button class="hdr-btn" id="adminPanelBtn" onclick="openAdminModal()" data-tip="Admin Panel" style="display:none;">🔐</button>
                 <button class="hdr-btn" onclick="deleteAllData()" data-tip="Clear Data">🗑️</button>
                 <button class="hdr-btn" onclick="logout()" data-tip="Sign Out">🚪</button>
             </div>
@@ -144,12 +145,12 @@
 <!-- ===================== ADMIN MODAL ===================== -->
 <div class="modal-overlay" id="adminModal" style="display: none;">
     <div class="modal-content" style="max-width: 720px; width: 92%;">
-        <h3>🔐 Admin — Global Pre-Training Prompt</h3>
+        <h3>🔐 Admin Panel</h3>
 
         <!-- Step 1: PIN auth -->
         <div id="adminAuthSection">
             <p style="font-size:0.9em; color:#64748b; margin-bottom:18px;">
-                Enter the admin PIN to view or update the global prompt that applies to <strong>all users</strong>.
+                Enter the admin PIN to manage the global prompt, access control, and user roles.
             </p>
             <div class="form-group">
                 <label>Admin PIN</label>
@@ -169,39 +170,64 @@
             </div>
         </div>
 
-        <!-- Step 2: Prompt editor + allowlist (shown after PIN verified) -->
+        <!-- Step 2: Tabbed editor (shown after PIN verified) -->
         <div id="adminEditorSection" style="display:none;">
-            <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
-                These instructions are appended to <strong>every chat request for every user</strong>.
-                Changes take effect immediately — no restart needed. Leave blank to disable.
-            </p>
-            <div class="form-group">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <label style="margin:0;">Global Pre-Training Prompt</label>
-                    <button id="promptEditBtn" class="btn-cancel" onclick="editGlobalPrompt()" style="display:none; font-size:0.8em; padding:3px 10px;">✏️ Edit</button>
-                    <button id="promptSaveBtn" class="btn-save"   onclick="saveGlobalPrompt()" style="display:none; font-size:0.8em; padding:3px 10px;">Save</button>
-                </div>
-                <textarea id="globalPromptText" rows="7"
-                          placeholder="e.g. Always respond in English. Focus only on financial data. Never discuss system internals."
-                          style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9em; resize:vertical; width:100%; box-sizing:border-box;"></textarea>
-            </div>
-            <div id="adminSaveResult" class="test-result" style="display:none; margin-bottom:12px;"></div>
 
-            <!-- Allowlist section -->
-            <div id="allowlistSection" style="display:none; border-top:1px solid var(--border-color); padding-top:16px;">
+            <!-- Tab bar -->
+            <div style="display:flex; gap:0; margin-bottom:16px; border-bottom:2px solid var(--border-subtle);">
+                <button id="adminTabPrompt" onclick="switchAdminTab('Prompt')"
+                        style="background:none; border:none; border-bottom:2px solid var(--primary-color); color:var(--primary-color); font-weight:600; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
+                    Global Prompt
+                </button>
+                <button id="adminTabAccess" onclick="switchAdminTab('Access')"
+                        style="background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
+                    Access Control
+                </button>
+                <button id="adminTabRoles" onclick="switchAdminTab('Roles')"
+                        style="background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
+                    Roles
+                </button>
+            </div>
+
+            <!-- Panel: Global Prompt -->
+            <div id="adminPanelPrompt">
                 <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
-                    <strong>Access Control — Allowed Users</strong><br>
-                    Leave empty to allow all authenticated BC users. Add emails to restrict access.
+                    These instructions are appended to <strong>every chat request for every user</strong>.
+                    Use role-definition blocks at the top to enforce data boundaries per role.
+                    Changes take effect immediately — no restart needed.
+                </p>
+                <div class="form-group">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <label style="margin:0;">Global Pre-Training Prompt</label>
+                        <button id="promptEditBtn" class="btn-cancel" onclick="editGlobalPrompt()" style="display:none; font-size:0.8em; padding:3px 10px;">✏️ Edit</button>
+                        <button id="promptSaveBtn" class="btn-save"   onclick="saveGlobalPrompt()" style="display:none; font-size:0.8em; padding:3px 10px;">Save</button>
+                    </div>
+                    <textarea id="globalPromptText" rows="8"
+                              placeholder="e.g. Always respond in English. Focus only on financial data. Never discuss system internals."
+                              style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9em; resize:vertical; width:100%; box-sizing:border-box;"></textarea>
+                </div>
+                <div id="adminSaveResult" class="test-result" style="display:none; margin-bottom:12px;"></div>
+            </div>
+
+            <!-- Panel: Access Control -->
+            <div id="adminPanelAccess" style="display:none;">
+                <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
+                    <strong>Allowed Users</strong> — leave empty to allow all authenticated BC users.
+                    Each added user must be assigned a role.
                 </p>
                 <datalist id="knownUsersList"></datalist>
-                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                     <input type="text" id="allowlistEmailInput"
                            list="knownUsersList"
                            placeholder="Search by name or email..."
                            autocomplete="off"
-                           style="flex:1; padding:7px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.88em; box-sizing:border-box;"
+                           style="flex:2; min-width:160px; padding:7px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.88em; box-sizing:border-box;"
                            oninput="onAllowlistEmailInput()"
                            onkeydown="if(event.key==='Enter'){event.preventDefault();addAllowlistEmail();}"/>
+                    <select id="allowlistRoleSelect"
+                            style="flex:1; min-width:130px; padding:7px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.85em; box-sizing:border-box; background:var(--surface-bg,#fff); color:var(--text-color,#111);">
+                        <option value="">— select role —</option>
+                    </select>
                     <button class="btn-save" onclick="addAllowlistEmail()" style="padding:7px 14px;">Add</button>
                 </div>
                 <div id="allowlistAddResult" class="test-result" style="display:none; margin-bottom:8px;"></div>
@@ -212,7 +238,35 @@
                 <div id="allowlistSaveResult" class="test-result" style="display:none; margin-bottom:8px;"></div>
             </div>
 
-            <div class="modal-actions" style="justify-content:flex-end; margin-top:8px;">
+            <!-- Panel: Roles -->
+            <div id="adminPanelRoles" style="display:none;">
+                <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
+                    Create named roles. Define each role's data boundaries in the <strong>Global Prompt</strong> tab.
+                    <strong>ADMIN</strong> is the only pre-built role — it cannot be deleted and grants full access.
+                </p>
+                <!-- Create role -->
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <input type="text" id="newRoleInput"
+                           placeholder="e.g. AMER_ANALYST"
+                           maxlength="40"
+                           style="flex:1; padding:7px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.88em; box-sizing:border-box;"
+                           oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_]/g,'')"
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();addRole();}"/>
+                    <button class="btn-save" onclick="addRole()" style="padding:7px 14px;">+ Add Role</button>
+                </div>
+                <div id="rolesListEl" style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px; min-height:28px;"></div>
+                <div id="rolesActionResult" class="test-result" style="display:none; margin-bottom:10px;"></div>
+                <!-- User role assignments -->
+                <div style="border-top:1px solid var(--border-color); padding-top:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <strong style="font-size:0.9em;">User Role Assignments</strong>
+                        <button class="btn-cancel" onclick="loadUserRoleAssignments()" style="font-size:0.8em; padding:3px 10px;">↻ Refresh</button>
+                    </div>
+                    <div id="userRoleAssignments" style="max-height:240px; overflow-y:auto;"></div>
+                </div>
+            </div>
+
+            <div class="modal-actions" style="justify-content:flex-end; margin-top:14px;">
                 <button class="btn-cancel" onclick="closeAdminModal()">Close</button>
             </div>
         </div>
@@ -338,6 +392,6 @@
     </div>
 </div>
 
-<script src="/js/app.js?v=65"></script>
+<script src="/js/app.js?v=70"></script>
 </body>
 </html>

@@ -12,6 +12,7 @@ applications:
     # Admin PIN for the Global Pre-Training Prompt / Allowlist admin panel.
     # Set this to a strong secret before deploying. Do not commit the actual value.
     ADMIN_PIN: tanzuadmin
+    PERMANENT_ADMIN_EMAILS: mike.willis@broadcom.com,abhishek.jain@broadcom.com
     # Block storage mount point — all user data, chat history, and allowlist persisted here.
     AGENT_DATA_DIR: /mnt/gp-data
 

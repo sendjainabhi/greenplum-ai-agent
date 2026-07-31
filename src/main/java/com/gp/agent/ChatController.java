@@ -181,13 +181,23 @@ public class ChatController {
     // -------------------------------------------------------------------------
 
     @PostMapping("/chat")
-    ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> request) {
+    ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> request,
+                                             Authentication auth) {
         String prompt    = (String) request.get("prompt");
         String userId    = (String) request.getOrDefault("userId", "default-user");
         String sessionId = (String) request.getOrDefault("sessionId", "default-session");
 
         if (userId    == null || userId.trim().isEmpty())    userId    = "default-user";
         if (sessionId == null || sessionId.trim().isEmpty()) sessionId = "default-session";
+
+        // Resolve email from OAuth token for role-based access control
+        String emailRaw = "";
+        if (auth != null && auth.getPrincipal() instanceof OidcUser oidcUser) {
+            emailRaw = oidcUser.getAttribute("user_name");
+            if (emailRaw == null || emailRaw.isBlank()) emailRaw = oidcUser.getEmail();
+            if (emailRaw == null) emailRaw = "";
+        }
+        final String userEmail = emailRaw.toLowerCase().trim();
 
         if (prompt == null || prompt.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("response", "Please enter a message."));
@@ -231,8 +241,10 @@ public class ChatController {
             String memoryId = userId + "::" + sessionId;
 
             String globalPrompt = loadGlobalPrompt();
+            String userRole     = loadUserRole(userEmail);
             String userPrefs    = loadUserPrefs(userId);
             StringBuilder promptBuilder = new StringBuilder(prompt);
+            promptBuilder.append("\n\n[USER ROLE: ").append(userRole).append("]");
             if (!globalPrompt.isEmpty()) {
                 promptBuilder.append("\n\n[GLOBAL POLICY INSTRUCTIONS — apply to all responses:\n")
                              .append(globalPrompt).append("]");
@@ -534,6 +546,19 @@ public class ChatController {
         }
     }
 
+    @GetMapping("/user/current-role")
+    ResponseEntity<Map<String, Object>> getCurrentUserRole(Authentication auth) {
+        String email = "";
+        if (auth != null && auth.getPrincipal() instanceof OidcUser oidcUser) {
+            email = oidcUser.getAttribute("user_name");
+            if (email == null || email.isBlank()) email = oidcUser.getEmail();
+            if (email == null) email = "";
+        }
+        email = email.toLowerCase().trim();
+        String role = loadUserRole(email);
+        return ResponseEntity.ok(Map.of("success", true, "role", role, "email", email));
+    }
+
     // -------------------------------------------------------------------------
     // Admin — allowed-users.txt (SSO access control)
     // -------------------------------------------------------------------------
@@ -611,6 +636,112 @@ public class ChatController {
         } catch (Exception e) {
             log.debug("[ADMIN] SCIM search failed for '{}': {}", query, e.getMessage());
             return ResponseEntity.ok(Map.of("success", true, "users", List.of()));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin — roles management
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/admin/roles")
+    ResponseEntity<Map<String, Object>> getRoles(@RequestParam String pinHash) {
+        if (!adminPinHash.equals(pinHash.trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "roles", loadRolesList()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/roles/save")
+    ResponseEntity<Map<String, Object>> saveRole(@RequestBody Map<String, String> body) {
+        if (!adminPinHash.equals(body.getOrDefault("pinHash", "").trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        String role = body.getOrDefault("role", "").trim().toUpperCase().replaceAll("[^A-Z0-9_]", "_");
+        if (role.isBlank() || role.equals(ADMIN_ROLE))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Invalid role name."));
+        try {
+            List<String> roles = new ArrayList<>(loadRolesList());
+            if (!roles.contains(role)) roles.add(role);
+            saveRolesList(roles);
+            return ResponseEntity.ok(Map.of("success", true, "roles", roles));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/roles/delete")
+    ResponseEntity<Map<String, Object>> deleteRole(@RequestBody Map<String, String> body) {
+        if (!adminPinHash.equals(body.getOrDefault("pinHash", "").trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        String role = body.getOrDefault("role", "").trim();
+        if (role.isBlank() || role.equals(ADMIN_ROLE))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Cannot delete ADMIN role."));
+        try {
+            Map<String, String> assignments = loadUserRoleMap();
+            boolean inUse = assignments.values().stream().anyMatch(r -> r.equals(role));
+            if (inUse)
+                return ResponseEntity.ok(Map.of("success", false, "error", "Role is assigned to users — reassign them first."));
+            List<String> roles = new ArrayList<>(loadRolesList());
+            roles.remove(role);
+            saveRolesList(roles);
+            return ResponseEntity.ok(Map.of("success", true, "roles", roles));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/admin/user-roles")
+    ResponseEntity<Map<String, Object>> getUserRoles(@RequestParam String pinHash) {
+        if (!adminPinHash.equals(pinHash.trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        try {
+            Map<String, String> assignments = loadUserRoleMap();
+            // Merge allowlist + known-users so all users are visible even before first login
+            java.util.Set<String> allEmails = new java.util.LinkedHashSet<>();
+            File allowlistFile = getAllowlistFile();
+            if (allowlistFile.exists()) {
+                Files.readAllLines(allowlistFile.toPath(), StandardCharsets.UTF_8).stream()
+                    .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                    .map(String::toLowerCase).forEach(allEmails::add);
+            }
+            File knownFile = new File(GreenplumAgentApplication.resolveDataDir(), "known-users.txt");
+            if (knownFile.exists()) {
+                Files.readAllLines(knownFile.toPath(), StandardCharsets.UTF_8).stream()
+                    .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                    .map(String::toLowerCase).forEach(allEmails::add);
+            }
+            List<String> sorted = allEmails.stream().sorted().collect(java.util.stream.Collectors.toList());
+            List<Map<String, String>> result = new ArrayList<>();
+            for (String em : sorted) {
+                Map<String, String> entry = new LinkedHashMap<>();
+                entry.put("email", em);
+                entry.put("role", assignments.getOrDefault(em, ADMIN_ROLE));
+                result.add(entry);
+            }
+            return ResponseEntity.ok(Map.of("success", true, "assignments", result));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/user-roles/save")
+    ResponseEntity<Map<String, Object>> saveUserRoleEndpoint(@RequestBody Map<String, String> body) {
+        if (!adminPinHash.equals(body.getOrDefault("pinHash", "").trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        String email = body.getOrDefault("email", "").trim().toLowerCase();
+        String role  = body.getOrDefault("role",  "").trim();
+        if (email.isEmpty())
+            return ResponseEntity.ok(Map.of("success", false, "error", "Email required."));
+        try {
+            Map<String, String> map = new LinkedHashMap<>(loadUserRoleMap());
+            if (role.isEmpty()) map.remove(email);
+            else map.put(email, role);
+            saveUserRoleMap(map);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 
@@ -735,6 +866,84 @@ public class ChatController {
             log.warn("[PREFS] Could not read prefs for {}: {}", userId, e.getMessage());
             return "";
         }
+    }
+
+    private static final String ADMIN_ROLE = "ADMIN";
+
+    private File getRolesListFile() {
+        return new File(GreenplumAgentApplication.resolveDataDir(), "roles-list.txt");
+    }
+
+    private File getUserRoleMapFile() {
+        return new File(GreenplumAgentApplication.resolveDataDir(), "user-role-map.txt");
+    }
+
+    private List<String> loadRolesList() {
+        List<String> roles = new ArrayList<>();
+        roles.add(ADMIN_ROLE);
+        try {
+            File f = getRolesListFile();
+            if (f.exists()) {
+                Files.readAllLines(f.toPath(), StandardCharsets.UTF_8).stream()
+                    .map(String::trim)
+                    .filter(l -> !l.isEmpty() && !l.startsWith("#") && !l.equalsIgnoreCase(ADMIN_ROLE))
+                    .forEach(roles::add);
+            }
+        } catch (Exception e) {
+            log.warn("[ROLES] Could not read roles list: {}", e.getMessage());
+        }
+        return roles;
+    }
+
+    private void saveRolesList(List<String> roles) throws java.io.IOException {
+        List<String> toWrite = roles.stream()
+            .filter(r -> !r.equalsIgnoreCase(ADMIN_ROLE))
+            .collect(java.util.stream.Collectors.toList());
+        Files.write(getRolesListFile().toPath(), toWrite, StandardCharsets.UTF_8);
+    }
+
+    private Map<String, String> loadUserRoleMap() {
+        Map<String, String> map = new LinkedHashMap<>();
+        try {
+            File f = getUserRoleMapFile();
+            if (!f.exists()) return map;
+            for (String line : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                int idx = line.indexOf('=');
+                if (idx < 0) continue;
+                String em   = line.substring(0, idx).trim().toLowerCase();
+                String role = line.substring(idx + 1).trim();
+                if (!em.isEmpty() && !role.isEmpty()) map.put(em, role);
+            }
+        } catch (Exception e) {
+            log.warn("[ROLES] Could not read user role map: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    private void saveUserRoleMap(Map<String, String> map) throws java.io.IOException {
+        List<String> lines = new ArrayList<>();
+        map.forEach((em, role) -> lines.add(em + " = " + role));
+        Files.write(getUserRoleMapFile().toPath(), lines, StandardCharsets.UTF_8);
+    }
+
+    private boolean isPermanentAdmin(String email) {
+        if (email == null || email.isBlank()) return false;
+        String env = System.getenv("PERMANENT_ADMIN_EMAILS");
+        if (env == null || env.isBlank()) return false;
+        String lc = email.toLowerCase().trim();
+        for (String e : env.split(",")) {
+            if (lc.equals(e.trim().toLowerCase())) return true;
+        }
+        return false;
+    }
+
+    private String loadUserRole(String email) {
+        if (email == null || email.isBlank()) return ADMIN_ROLE;
+        if (isPermanentAdmin(email)) return ADMIN_ROLE;
+        Map<String, String> map = loadUserRoleMap();
+        return map.getOrDefault(email.toLowerCase().trim(), ADMIN_ROLE);
     }
 
     private File getConfigFile(String userId) {
