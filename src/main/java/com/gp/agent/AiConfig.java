@@ -1,5 +1,6 @@
 package com.gp.agent;
 
+import com.gp.agent.db.PostgresChatMemoryStore;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
@@ -8,8 +9,10 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -22,8 +25,17 @@ import java.util.List;
 @Configuration
 public class AiConfig {
 
+    // Postgres-backed memory store — used when postgres VCAP binding is present
     @Bean
-    ChatMemoryStore chatMemoryStore() {
+    @ConditionalOnProperty(name = "gp.agent.storage", havingValue = "postgres")
+    ChatMemoryStore postgresChatMemoryStore(JdbcTemplate jdbcTemplate) {
+        return new PostgresChatMemoryStore(jdbcTemplate);
+    }
+
+    // File-backed memory store — fallback when no postgres binding
+    @Bean
+    @ConditionalOnProperty(name = "gp.agent.storage", havingValue = "file", matchIfMissing = true)
+    ChatMemoryStore fileChatMemoryStore() {
         return new FileBackedChatMemoryStore();
     }
 

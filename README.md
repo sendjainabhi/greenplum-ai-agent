@@ -3,7 +3,7 @@
 > [!WARNING]
 > **PROOF OF CONCEPT — Not for production use.**
 
-A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate via Broadcom AuthHub SSO, bind your Tanzu GenAI model, Greenplum MCP, and block-storage services — users sign in with their Broadcom credentials and start chatting with their Greenplum database in natural language. No UI configuration required.
+A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate via Broadcom AuthHub SSO, bind your Tanzu GenAI model, Greenplum MCP, and Tanzu Postgres services — users sign in with their Broadcom credentials and start chatting with their Greenplum database in natural language. All persistent data is stored in a dedicated PostgreSQL database; no manual file management required.
 
 ---
 
@@ -16,10 +16,11 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 5. [Admin Panel & User Preferences](#admin-panel)
 6. [Role-Based Access Control](#role-based-access-control)
 7. [Platform Services](#platform-services)
-8. [Deployment](#deployment)
-9. [Architecture](#architecture)
-10. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
-11. [Troubleshooting](#troubleshooting)
+8. [PostgreSQL Database](#postgresql-database)
+9. [Deployment](#deployment)
+10. [Architecture](#architecture)
+11. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -30,7 +31,7 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 3. At startup the app reads all AI model, MCP, and storage credentials from `VCAP_SERVICES` — nothing to configure manually
 4. Admins can restrict access to specific Broadcom email addresses and assign each user a role
 5. Every chat request is tagged with the user's role — the AI enforces data access boundaries defined in the global prompt
-6. Each user's sessions, AI memory, and saved prompts are stored independently on block storage
+6. Each user's sessions, AI memory, and saved prompts are stored independently in the PostgreSQL database
 
 **Header status indicators:**
 
@@ -78,7 +79,7 @@ Each user can set personal AI instructions that apply only to their sessions and
 
 - **Access** — click your **initials circle** in the top-left of the header
 - **Edit** — click ✏️ Edit to modify, **Save** to persist immediately
-- **Persisted server-side** — stored at `users/{userId}/user-prefs.txt` on block storage; survives logouts, browser changes, and app restages
+- **Persisted server-side** — stored in the `user_preferences` table in PostgreSQL; survives logouts, browser changes, and app restages
 - **Priority** — appended after the admin global prompt, so user instructions override global defaults for that user
 
 **Useful preference examples:**
@@ -182,7 +183,7 @@ Instructions are applied in this order on every chat request — later entries t
 
 A system instruction appended to every chat request for every user. Define role boundaries here alongside general data governance rules.
 
-- Stored at `{data-dir}/global-prompt.txt` on block storage; read fresh on every request
+- Stored in the `app_config` table (`key = 'global_prompt'`) in PostgreSQL; read fresh on every request
 - Click **✏️ Edit** to modify, **Save** to apply immediately (no restart needed)
 - Leave blank to disable
 
@@ -213,12 +214,12 @@ Only query data where region = 'AMER'. Refuse requests for other regions.
 
 ### Tab 2 — Access Control
 
-File-based email allowlist stored at `{data-dir}/allowed-users.txt`.
+Email allowlist stored in the `allowed_users` table in PostgreSQL.
 
 | State | Behaviour |
 | :--- | :--- |
-| File absent or empty | **All** authenticated Broadcom users are allowed (fail-open) |
-| File has entries | Only listed email addresses are admitted; others get a 403 |
+| Table empty | **All** authenticated Broadcom users are allowed (fail-open) |
+| Table has entries | Only listed email addresses are admitted; others get a 403 |
 
 **UI actions:**
 - Enter an email, select a role from the dropdown (required), click **Add** — saves automatically
@@ -272,12 +273,12 @@ env:
 
 > Changing permanent admins requires editing `manifest.yml` and running `mvn clean package && cf push`.
 
-### Storage Files
+### Storage (PostgreSQL)
 
-| File | Content |
+| Table | Content |
 | :--- | :--- |
-| `roles-list.txt` | Custom role names (one per line); `ADMIN` is always implicit |
-| `user-role-map.txt` | `email = ROLE` entries; one per line |
+| `roles` | Custom role names; `ADMIN` is always implicit and cannot be deleted |
+| `user_roles` | `email → role` assignment per user |
 
 ### Admin Panel Visibility
 
@@ -324,25 +325,31 @@ If `modelName` is absent the app auto-discovers the first non-embedding model fr
 
 Supported providers: **OpenAI-compatible** (vLLM, LMStudio, ChatGPT), **Anthropic**, **Ollama**.
 
-### Block Storage (`greenplum-agent-storage`)
+### Tanzu Postgres (`greenplum-agent-db`)
 
-CF block storage volume service. Stores all persistent data for the app. The app reads the actual mount path from `VCAP_SERVICES → volume_mounts[*].container_dir` — the `AGENT_DATA_DIR` env var is only a hint.
-
-| Path | Content |
-| :--- | :--- |
-| `global-prompt.txt` | Admin global pre-training prompt (includes role definitions) |
-| `allowed-users.txt` | Email allowlist for access control |
-| `roles-list.txt` | Custom role names; `ADMIN` is always implicit |
-| `user-role-map.txt` | `email = ROLE` per line; role assigned to each user |
-| `users/{userId}/config.json` | Per-user AI model and MCP settings |
-| `users/{userId}/sessions.json` | Per-user chat session history |
-| `users/{userId}/favourites.json` | Per-user saved favourite prompts |
-| `users/{userId}/user-prefs.txt` | Per-user personal AI preferences |
+Tanzu Postgres `db-small` service (20 GB). All persistent app data is stored here. The app detects the binding via `VCAP_SERVICES` at startup and activates `PostgresAgentDao` automatically — no manual configuration required.
 
 ```bash
-# Create block storage (ops team, once per environment):
-cf create-service <block-storage-service> <plan> greenplum-agent-storage
+# Create Tanzu Postgres instance (ops team, once per environment):
+cf create-service postgres db-small greenplum-agent-db
+
+# Bind to the app:
+cf bind-service greenplum-ai-agent greenplum-agent-db
+cf restage greenplum-ai-agent
 ```
+
+Schema is managed by Flyway (`V1__schema.sql`) and applied automatically on first startup.
+
+### Block Storage (`greenplum-agent-storage`) — Backup Only
+
+Block storage was the original persistence layer and is retained as a backup. It is **no longer used by the app** — all reads and writes go to PostgreSQL. The volume remains bound so the original files are preserved.
+
+```bash
+# The service is still bound but commented out in manifest.yml:
+# - greenplum-agent-storage
+```
+
+> To roll back to file-based storage: uncomment `greenplum-agent-storage` and `AGENT_DATA_DIR` in `manifest.yml`, remove the `greenplum-agent-db` binding, and `cf push`.
 
 ### Greenplum MCP (`gp-mcp-greenplum`)
 
@@ -376,6 +383,69 @@ cf create-user-provided-service gp-mcp-openmetadata \
 
 ---
 
+## PostgreSQL Database
+
+All persistent app data is stored in a Tanzu Postgres `db-small` instance (`greenplum-agent-db`). Schema is created and versioned by Flyway on first startup. Both app instances (`greenplum-ai-agent` and `greenplum-ai-agent-db`) share the same database.
+
+### Tables
+
+| Table | Purpose | Key Columns |
+| :--- | :--- | :--- |
+| `app_config` | Global app settings (currently: global prompt) | `key` (PK), `value`, `updated_at` |
+| `allowed_users` | Email allowlist for access control | `email` (PK), `created_at` |
+| `known_users` | All users who have ever logged in (admin autocomplete) | `email` (PK), `first_seen` |
+| `roles` | Custom role names | `name` (PK), `created_at` |
+| `user_roles` | Role assigned to each user | `email` (PK), `role`, `updated_at` |
+| `user_config` | Per-user AI model and MCP settings (JSON) | `user_id` (PK), `config_json`, `updated_at` |
+| `user_preferences` | Per-user personal AI instructions | `user_id` (PK), `prefs`, `updated_at` |
+| `user_sessions` | Per-user chat session list and history (JSON) | `user_id` (PK), `data`, `updated_at` |
+| `user_favourites` | Per-user saved favourite prompts (JSON array) | `user_id` (PK), `data`, `updated_at` |
+| `user_memory` | Per-user, per-session LangChain4j chat memory | `user_id` + `session_id` (PK), `messages`, `updated_at` |
+
+### Data Flow
+
+Every user action updates the database immediately — no restart or manual export needed:
+
+| User Action | Table Updated |
+| :--- | :--- |
+| Admin saves global prompt | `app_config` (upsert on `key = 'global_prompt'`) |
+| Admin updates allowlist | `allowed_users` (full replace) |
+| Admin adds / removes a role | `roles` |
+| Admin assigns role to user | `user_roles` (upsert on `email`) |
+| User logs in for the first time | `known_users` (insert on conflict do nothing) |
+| User saves preferences | `user_preferences` (upsert on `user_id`) |
+| User sends / receives a message | `user_memory` (upsert on `user_id + session_id`) |
+| User saves / updates sessions | `user_sessions` (upsert on `user_id`) |
+| User saves / deletes a favourite | `user_favourites` (upsert on `user_id`) |
+| User clears chat memory | `user_memory` rows deleted for that `user_id` |
+
+### Storage Mode Detection
+
+`PostgresEnvironmentPostProcessor` runs before Spring Boot auto-configuration. It reads `VCAP_SERVICES` for a postgres binding and sets the `gp.agent.storage` property:
+
+| Value | Active DAO | When |
+| :--- | :--- | :--- |
+| `postgres` | `PostgresAgentDao` | Tanzu Postgres service bound |
+| `file` | `FileAgentDao` | No postgres binding (fallback) |
+
+`@ConditionalOnProperty` on the DAO beans ensures exactly one implementation is loaded per startup.
+
+### Flyway Migrations
+
+Migrations live in `src/main/resources/db/` and are named `V{n}__{description}.sql`.
+
+| Migration | Tables Created |
+| :--- | :--- |
+| `V1__schema.sql` | `app_config`, `allowed_users`, `known_users`, `roles`, `user_roles`, `user_config`, `user_preferences`, `user_sessions`, `user_favourites`, `user_memory` |
+
+Flyway runs automatically on every startup and applies any pending migrations. Completed migrations are tracked in `flyway_schema_history`.
+
+### Multi-App Access
+
+When multiple CF apps bind the same Tanzu Postgres service instance, each binding creates a unique database user. All binding users are granted full `SELECT / INSERT / UPDATE / DELETE` on all tables and sequences — changes made in one app are immediately visible in the other.
+
+---
+
 ## Deployment
 
 ### Prerequisites
@@ -388,7 +458,7 @@ cf create-user-provided-service gp-mcp-openmetadata \
 | `java_buildpack_offline` v4.90+ | Resolves CredHub refs at container start |
 | Tanzu SSO service instance | AuthHub `p-identity` — created by platform ops |
 | Tanzu GenAI service instance | AI model — required for chat |
-| Block storage service instance | Per-user persistence — highly recommended |
+| Tanzu Postgres `db-small` | All persistent data — required |
 | Greenplum MCP CF app | Separately deployed; see its README |
 
 ---
@@ -425,12 +495,17 @@ The OAuth2 client (redirect URIs, scopes) is configured by the Tanzu SSO operato
 | **Scopes** | `openid`, `email`, `profile` |
 | **Auto-approve** | `openid` |
 
-#### 2b. Block Storage
+#### 2b. Tanzu Postgres
 
 ```bash
-# Create using your environment's block storage broker:
-cf create-service <block-storage-broker> <plan> greenplum-agent-storage
+# List available postgres plans:
+cf marketplace -e postgres
+
+# Create db-small instance (20 GB):
+cf create-service postgres db-small greenplum-agent-db
 ```
+
+Flyway will create all tables on first app startup — no manual schema setup needed.
 
 #### 2c. AI Model
 
@@ -589,12 +664,15 @@ applications:
     JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
     ADMIN_PIN: <your-admin-pin>
     PERMANENT_ADMIN_EMAILS: first.admin@your-company.com,second.admin@your-company.com
-    AGENT_DATA_DIR: /mnt/gp-data        # hint only; actual path read from VCAP volume_mounts
+    # Block storage kept as backup — no longer used by the app (data migrated to postgres).
+    # Uncomment AGENT_DATA_DIR only if rolling back to file-based storage.
+    # AGENT_DATA_DIR: /mnt/gp-data
   services:
     - gmd-authhub-sso                   # Tanzu AuthHub SSO (p-identity)
-    - greenplum-agent-storage           # CF block storage for persistence
+    # - greenplum-agent-storage         # Block storage (backup only — data migrated to postgres)
     - gmd-ai-prod-svc                   # Tanzu GenAI or user-provided AI model
     - gp-mcp-greenplum                  # Greenplum MCP (user-provided)
+    - greenplum-agent-db                # Tanzu Postgres db-small — all persistent data
     # - gp-mcp-openmetadata             # OpenMetadata MCP (optional)
 ```
 
@@ -625,9 +703,13 @@ cf logs greenplum-ai-agent --recent
 Expected startup log markers:
 
 ```
+[POSTGRES] DataSource configured from VCAP: jdbc:postgresql://...
 [CF] CF mode active — provider=openai model=gpt-4o baseUrl=https://... mcp=greenplum
-DATA DIR      : /var/vcap/data/<uuid>
-LOG FILE      : /var/vcap/data/<uuid>/greenplum-agent.log
+[MIGRATION] No block-storage data directory found — skipping migration
+  (or, on first boot with block storage still bound:)
+[MIGRATION] Starting block-storage → postgres migration from /var/vcap/data/<uuid>
+[MIGRATION] Migration completed successfully
+Started GreenplumAgentApplication in X seconds
 ```
 
 ---
@@ -1091,14 +1173,16 @@ No additional UAA-specific libraries are required. Spring Security's standard OA
 | Symptom | Likely cause | Fix |
 | :--- | :--- | :--- |
 | Redirect loop on login | SSO service not bound or credentials malformed | `cf bind-service` + `cf restage`; check startup logs for `[SSO]` markers |
-| "Access Denied" after login | User email not in allowlist | Add email via the Admin Panel, or clear the allowlist to allow all users |
+| "Access Denied" after login | User email not in allowlist | Add email via the Admin Panel, or clear the allowlist (empty table = allow all) |
 | Model dot red on startup | AI service not bound or credential resolution failed | Bind the AI service and `cf restage`; check logs for `[CF] CF mode active` |
 | Greenplum dot green but queries fail | Port 5432 blocked by firewall | Open firewall from the MCP app to the database; the dot only checks MCP HTTP reachability, not database connectivity |
-| Allowlist save error | Block storage service not bound | Bind `greenplum-agent-storage` and `cf restage` |
-| Sessions lost after restage | Block storage service not bound | Bind `greenplum-agent-storage` and `cf restage` |
+| App crashes on startup with `permission denied for table flyway_schema_history` | Multiple apps share the same postgres instance; table owner user differs from connecting user | Grant `ALL PRIVILEGES ON ALL TABLES IN SCHEMA public` to the connecting user from the table owner user; see [Multi-App Access](#multi-app-access) |
+| App crashes on startup with `ERROR: relation "..." does not exist` | Flyway migration did not run or failed silently | Check logs for `[Flyway]` errors; ensure `flyway-database-postgresql` dependency is present in `pom.xml` for Spring Boot 3.3+ |
+| Admin changes (prompt, allowlist, roles) not persisted after restage | App running in file mode instead of postgres mode | Check startup logs for `[POSTGRES] DataSource configured` — if absent, verify `greenplum-agent-db` is bound and `cf restage` |
 | Old UI after deploy | Browser cached previous CSS / JS | Hard-refresh: Cmd/Ctrl + Shift + R |
-| User preferences not applying | Block storage not mounted or `user-prefs.txt` absent | Verify `greenplum-agent-storage` is bound and the app has restarted since binding |
+| User preferences not applying | Postgres binding missing or app in file mode | Verify `greenplum-agent-db` is bound; check `gp.agent.storage` in startup logs |
 | "Error connecting to backend API" with a specific message | Server-side error (e.g. SQL parse failure, model timeout) | Read the error detail — it shows the exact failure returned by the server |
+| Sessions lost after restage | Expected behaviour if app was in file mode before migration | Verify data was migrated to postgres; check `user_sessions` table has rows |
 
 ### Logs
 
@@ -1111,9 +1195,12 @@ cf logs greenplum-ai-agent            # live tail
 
 | Prefix | Meaning |
 | :--- | :--- |
+| `[POSTGRES] DataSource configured from VCAP` | Postgres binding found; app will use `PostgresAgentDao` |
 | `[CF] CF mode active` | VCAP_SERVICES parsed; model + MCP config resolved |
 | `[SSO] Login attempt by` | User authenticated; allowlist check running |
 | `[SSO] Access granted for` | User passed allowlist check |
 | `[SSO] Access denied for` | User not in allowlist |
-| `DATA DIR :` | Resolved writable data directory (from volume_mounts or AGENT_DATA_DIR) |
+| `[MIGRATION] Starting block-storage → postgres migration` | First boot with block storage present; auto-migrating files to DB |
+| `[MIGRATION] ... already in DB — skipping` | Data already migrated; migration skipped safely |
+| `[MIGRATION] Migration completed successfully` | All file data copied to postgres |
 | `[VCAP] discovered model:` | Model selected via `/models` auto-discovery |

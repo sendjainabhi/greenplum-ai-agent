@@ -1,0 +1,25 @@
+---
+# Test manifest for DB-migration validation.
+# Deploys a separate app instance (greenplum-ai-agent-db) that binds
+# the Tanzu Postgres service alongside the existing block storage.
+# Once all features are verified, the same postgres service can be
+# added to the production manifest.yml for greenplum-ai-agent.
+applications:
+- name: greenplum-ai-agent-db
+  path: target/greenplum-ai-agent-1.0.0.jar
+  memory: 2G
+  instances: 1
+  buildpacks:
+    - java_buildpack_offline
+  env:
+    JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
+    SPRING_PROFILES_ACTIVE: cloud
+    ADMIN_PIN: tanzuadmin
+    PERMANENT_ADMIN_EMAILS: mike.willis@broadcom.com,abhishek.jain@broadcom.com
+    # No block storage — all data goes to postgres (PostgresAgentDao active when greenplum-agent-db is bound)
+
+  services:
+    - gmd-authhub-sso          # Tanzu SSO / Broadcom AuthHub
+    - ai-gmd-paid-svc          # Tanzu GenAI paid model service
+    - gp-mcp-greenplum         # Greenplum MCP server
+    - greenplum-agent-db       # Tanzu Postgres (db-small, 20 GB) — activates PostgresAgentDao

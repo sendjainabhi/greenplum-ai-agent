@@ -1,5 +1,6 @@
 package com.gp.agent;
 
+import com.gp.agent.db.AgentDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -16,17 +17,18 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.util.List;
-
 @Configuration
 @EnableWebSecurity
 @Profile("cloud")
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
+    private final AgentDao agentDao;
+
+    public SecurityConfig(AgentDao agentDao) {
+        this.agentDao = agentDao;
+    }
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -72,7 +74,7 @@ public class SecurityConfig {
 
             log.info("[SSO] Login attempt by {}", email);
 
-            if (!isUserAllowed(email)) {
+            if (!agentDao.isUserAllowed(email)) {
                 log.warn("[SSO] Access denied for user: {}", email);
                 throw new OAuth2AuthenticationException(
                     new OAuth2Error("access_denied",
@@ -80,7 +82,7 @@ public class SecurityConfig {
             }
 
             log.info("[SSO] Access granted for {}", email);
-            recordKnownUser(email);
+            agentDao.addKnownUser(email);
             return user;
         };
     }
@@ -100,48 +102,6 @@ public class SecurityConfig {
         } catch (Exception e) {
             log.debug("[SSO] Could not read auth_domain: {}", e.getMessage());
             return null;
-        }
-    }
-
-    /** Appends email to known-users.txt so admins can pick from a list of real users. */
-    private static void recordKnownUser(String email) {
-        try {
-            File f = new File(GreenplumAgentApplication.resolveDataDir(), "known-users.txt");
-            List<String> existing = f.exists()
-                ? Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)
-                : new java.util.ArrayList<>();
-            String norm = email.trim().toLowerCase();
-            boolean alreadyKnown = existing.stream().anyMatch(l -> l.trim().equalsIgnoreCase(norm));
-            if (!alreadyKnown) {
-                existing.add(norm);
-                Files.write(f.toPath(), existing, StandardCharsets.UTF_8);
-            }
-        } catch (Exception e) {
-            log.debug("[SSO] Could not record known user: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Checks whether the given email is in the file-based allowlist.
-     * File: {AGENT_DATA_DIR}/allowed-users.txt — one email per line, # = comment.
-     * If the file does not exist or is empty, all authenticated users are allowed.
-     */
-    static boolean isUserAllowed(String email) {
-        if (email == null || email.isBlank()) return false;
-        File allowlistFile = new File(GreenplumAgentApplication.resolveDataDir(), "allowed-users.txt");
-        if (!allowlistFile.exists()) return true;
-        try {
-            List<String> lines = Files.readAllLines(allowlistFile.toPath(), StandardCharsets.UTF_8);
-            boolean hasEntries = lines.stream()
-                .anyMatch(l -> !l.trim().isEmpty() && !l.trim().startsWith("#"));
-            if (!hasEntries) return true;
-            return lines.stream()
-                .map(String::trim)
-                .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                .anyMatch(l -> l.equalsIgnoreCase(email));
-        } catch (Exception e) {
-            log.warn("[SSO] Could not read allowed-users.txt, failing open: {}", e.getMessage());
-            return true;
         }
     }
 }

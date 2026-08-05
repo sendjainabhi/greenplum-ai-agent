@@ -25,7 +25,7 @@ public class GreenplumAgentApplication {
         SpringApplication.run(GreenplumAgentApplication.class, args);
     }
 
-    static String resolveDataDir() {
+    public static String resolveDataDir() {
         // 1. Honour explicit env var if the path exists and is writable
         String env = System.getenv("AGENT_DATA_DIR");
         if (env != null && !env.trim().isEmpty()) {

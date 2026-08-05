@@ -13,11 +13,13 @@ applications:
     # Set this to a strong secret before deploying. Do not commit the actual value.
     ADMIN_PIN: tanzuadmin
     PERMANENT_ADMIN_EMAILS: mike.willis@broadcom.com,abhishek.jain@broadcom.com
-    # Block storage mount point — all user data, chat history, and allowlist persisted here.
-    AGENT_DATA_DIR: /mnt/gp-data
+    # Block storage kept as backup — AGENT_DATA_DIR no longer used by the app.
+    # Uncomment AGENT_DATA_DIR below only if rolling back to file-based storage.
+    # AGENT_DATA_DIR: /mnt/gp-data
 
   services:
     - gmd-authhub-sso          # Tanzu SSO / Broadcom AuthHub (p-identity plan: tanzu-authhub)
-    - greenplum-agent-storage  # Block storage volume (1024 MB) mounted at /mnt/gp-data
+    # - greenplum-agent-storage  # Block storage (backup only — data migrated to postgres)
     - ai-gmd-paid-svc          # Tanzu GenAI paid model service (ai-gmd-paid plan)
     - gp-mcp-greenplum         # Greenplum MCP server (gp-mcp-server.apps.tanzu.broadcom.net)
+    - greenplum-agent-db       # Tanzu Postgres (db-small, 20 GB) — all persistent data

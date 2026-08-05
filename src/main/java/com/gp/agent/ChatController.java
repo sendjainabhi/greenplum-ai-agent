@@ -1,8 +1,10 @@
 package com.gp.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gp.agent.db.AgentDao;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import dev.langchain4j.model.ollama.OllamaChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
@@ -16,10 +18,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -37,7 +38,9 @@ public class ChatController {
     private static final int MAX_PROMPT_LENGTH = 4000;
 
     private final ChatMemoryProvider memoryProvider;
+    private final ChatMemoryStore chatMemoryStore;
     private final VcapServicesConfig vcapConfig;
+    private final AgentDao agentDao;
 
     // Agent cache — keyed by userId, rebuilt only when config changes.
     // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
@@ -53,9 +56,12 @@ public class ChatController {
     // No in-memory cache for global prompt — always read from disk so updates
     // apply immediately to every user and session without any restart.
 
-    public ChatController(ChatMemoryProvider memoryProvider, VcapServicesConfig vcapConfig) {
-        this.memoryProvider = memoryProvider;
-        this.vcapConfig     = vcapConfig;
+    public ChatController(ChatMemoryProvider memoryProvider, ChatMemoryStore chatMemoryStore,
+                          VcapServicesConfig vcapConfig, AgentDao agentDao) {
+        this.memoryProvider  = memoryProvider;
+        this.chatMemoryStore = chatMemoryStore;
+        this.vcapConfig      = vcapConfig;
+        this.agentDao        = agentDao;
     }
 
     @PostConstruct
@@ -131,16 +137,15 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
         }
         try {
-            File configFile = getConfigFile(userId.trim());
-            if (!configFile.exists()) {
+            Map<String, String> config = agentDao.loadUserConfig(userId.trim());
+            if (config.isEmpty()) {
                 return ResponseEntity.ok(Map.of("success", false));
             }
-            Map<String, String> config = loadOrSeedConfig(userId.trim(), null);
             // Never send PIN hash to the browser
             Map<String, Object> safe = new LinkedHashMap<>(config);
             safe.remove("pinHash");
             safe.remove("pinHint");
-            log.debug("[SETTINGS] Loaded from file for user {}", userId);
+            log.debug("[SETTINGS] Loaded for user {}", userId);
             return ResponseEntity.ok(Map.of("success", true, "config", safe));
         } catch (Exception e) {
             log.error("[SETTINGS] Load failed for {}: {}", userId, e.getMessage());
@@ -156,15 +161,10 @@ public class ChatController {
     ResponseEntity<Map<String, Object>> saveSettings(@RequestBody Map<String, String> req) {
         String userId = req.getOrDefault("userId", "default-user");
         try {
-            File configFile = getConfigFile(userId);
-            // Preserve existing PIN fields — read current config first, then merge new settings on top
-            Map<String, String> data = configFile.exists()
-                    ? new LinkedHashMap<>(loadOrSeedConfig(userId, null))
-                    : new LinkedHashMap<>();
+            // Preserve existing fields — read current config first, then merge new settings on top
+            Map<String, String> data = new LinkedHashMap<>(agentDao.loadUserConfig(userId));
             req.forEach((k, v) -> { if (!k.equals("userId")) data.put(k, v); });
-            Files.writeString(configFile.toPath(),
-                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data),
-                    StandardCharsets.UTF_8);
+            agentDao.saveUserConfig(userId, data);
             agentCache.remove(userId);
             configHashCache.remove(userId);
             log.info("[CONFIG] Saved for user {}", userId);
@@ -240,9 +240,9 @@ public class ChatController {
 
             String memoryId = userId + "::" + sessionId;
 
-            String globalPrompt = loadGlobalPrompt();
+            String globalPrompt = agentDao.loadGlobalPrompt();
             String userRole     = loadUserRole(userEmail);
-            String userPrefs    = loadUserPrefs(userId);
+            String userPrefs    = agentDao.loadUserPrefs(userId);
             StringBuilder promptBuilder = new StringBuilder(prompt);
             promptBuilder.append("\n\n[USER ROLE: ").append(userRole).append("]");
             if (!globalPrompt.isEmpty()) {
@@ -432,16 +432,10 @@ public class ChatController {
         }
         try {
             if (!sessionId.isEmpty()) {
-                File f = new File(GreenplumAgentApplication.resolveDataDir()
-                        + File.separator + "users" + File.separator + userId
-                        + File.separator + "memory" + File.separator + sessionId + ".json");
-                if (f.exists()) f.delete();
+                chatMemoryStore.deleteMessages(userId + "::" + sessionId);
                 log.info("[MEMORY] Cleared session {} for user {}", sessionId, userId);
             } else {
-                File dir = new File(GreenplumAgentApplication.resolveDataDir()
-                        + File.separator + "users" + File.separator + userId
-                        + File.separator + "memory");
-                deleteDirectory(dir);
+                agentDao.clearUserMemory(userId);
                 log.info("[MEMORY] Cleared all memory for user {}", userId);
             }
             return ResponseEntity.ok(Map.of("success", true));
@@ -464,9 +458,7 @@ public class ChatController {
                     .body(Map.of("success", false, "error", "userId is required"));
         }
         try {
-            File userDir = new File(GreenplumAgentApplication.resolveDataDir()
-                    + File.separator + "users" + File.separator + userId);
-            deleteDirectory(userDir);
+            agentDao.clearUserData(userId);
             agentCache.remove(userId);
             configHashCache.remove(userId);
             log.info("[DATA] Cleared all data for user {}", userId);
@@ -489,7 +481,7 @@ public class ChatController {
             log.warn("[ADMIN] Failed admin PIN attempt");
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
-        String globalPrompt = loadGlobalPrompt();
+        String globalPrompt = agentDao.loadGlobalPrompt();
         log.info("[ADMIN] Admin authenticated");
         return ResponseEntity.ok(Map.of("success", true, "globalPrompt", globalPrompt));
     }
@@ -502,7 +494,7 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
         try {
-            Files.writeString(getGlobalPromptFile().toPath(), prompt, StandardCharsets.UTF_8);
+            agentDao.saveGlobalPrompt(prompt);
             log.info("[ADMIN] Global prompt updated ({} chars)", prompt.length());
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
@@ -520,7 +512,7 @@ public class ChatController {
         if (userId == null || userId.trim().isEmpty())
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
         try {
-            String prefs = loadUserPrefs(userId);
+            String prefs = agentDao.loadUserPrefs(userId);
             return ResponseEntity.ok(Map.of("success", true, "prefs", prefs));
         } catch (Exception e) {
             log.error("[PREFS] Load failed for {}: {}", userId, e.getMessage());
@@ -535,9 +527,7 @@ public class ChatController {
         if (userId.isEmpty())
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
         try {
-            File f = getUserPrefsFile(userId);
-            f.getParentFile().mkdirs();
-            Files.writeString(f.toPath(), prefs, StandardCharsets.UTF_8);
+            agentDao.saveUserPrefs(userId, prefs);
             log.info("[PREFS] Saved for user {} ({} chars)", userId, prefs.length());
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
@@ -569,8 +559,7 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
         try {
-            File f = getAllowlistFile();
-            String content = f.exists() ? Files.readString(f.toPath(), StandardCharsets.UTF_8) : "";
+            String content = agentDao.loadAllowlist();
             return ResponseEntity.ok(Map.of("success", true, "allowlist", content));
         } catch (Exception e) {
             log.error("[ADMIN] Allowlist load failed: {}", e.getMessage());
@@ -586,7 +575,7 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
         try {
-            Files.writeString(getAllowlistFile().toPath(), content, StandardCharsets.UTF_8);
+            agentDao.saveAllowlist(content);
             log.info("[ADMIN] Allowlist updated");
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
@@ -601,12 +590,7 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
         try {
-            File f = new File(GreenplumAgentApplication.resolveDataDir(), "known-users.txt");
-            List<String> users = f.exists()
-                ? Files.readAllLines(f.toPath(), StandardCharsets.UTF_8).stream()
-                    .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                    .distinct().sorted().collect(java.util.stream.Collectors.toList())
-                : java.util.List.of();
+            List<String> users = agentDao.loadKnownUsers();
             return ResponseEntity.ok(Map.of("success", true, "users", users));
         } catch (Exception e) {
             log.error("[ADMIN] Known users load failed: {}", e.getMessage());
@@ -648,7 +632,7 @@ public class ChatController {
         if (!adminPinHash.equals(pinHash.trim()))
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         try {
-            return ResponseEntity.ok(Map.of("success", true, "roles", loadRolesList()));
+            return ResponseEntity.ok(Map.of("success", true, "roles", agentDao.loadRoles()));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
         }
@@ -662,9 +646,9 @@ public class ChatController {
         if (role.isBlank() || role.equals(ADMIN_ROLE))
             return ResponseEntity.ok(Map.of("success", false, "error", "Invalid role name."));
         try {
-            List<String> roles = new ArrayList<>(loadRolesList());
+            List<String> roles = new ArrayList<>(agentDao.loadRoles());
             if (!roles.contains(role)) roles.add(role);
-            saveRolesList(roles);
+            agentDao.saveRoles(roles);
             return ResponseEntity.ok(Map.of("success", true, "roles", roles));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
@@ -679,13 +663,13 @@ public class ChatController {
         if (role.isBlank() || role.equals(ADMIN_ROLE))
             return ResponseEntity.ok(Map.of("success", false, "error", "Cannot delete ADMIN role."));
         try {
-            Map<String, String> assignments = loadUserRoleMap();
+            Map<String, String> assignments = agentDao.loadUserRoleMap();
             boolean inUse = assignments.values().stream().anyMatch(r -> r.equals(role));
             if (inUse)
                 return ResponseEntity.ok(Map.of("success", false, "error", "Role is assigned to users — reassign them first."));
-            List<String> roles = new ArrayList<>(loadRolesList());
+            List<String> roles = new ArrayList<>(agentDao.loadRoles());
             roles.remove(role);
-            saveRolesList(roles);
+            agentDao.saveRoles(roles);
             return ResponseEntity.ok(Map.of("success", true, "roles", roles));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
@@ -697,21 +681,13 @@ public class ChatController {
         if (!adminPinHash.equals(pinHash.trim()))
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         try {
-            Map<String, String> assignments = loadUserRoleMap();
+            Map<String, String> assignments = agentDao.loadUserRoleMap();
             // Merge allowlist + known-users so all users are visible even before first login
             java.util.Set<String> allEmails = new java.util.LinkedHashSet<>();
-            File allowlistFile = getAllowlistFile();
-            if (allowlistFile.exists()) {
-                Files.readAllLines(allowlistFile.toPath(), StandardCharsets.UTF_8).stream()
+            Arrays.stream(agentDao.loadAllowlist().split("[\r\n]+"))
                     .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
                     .map(String::toLowerCase).forEach(allEmails::add);
-            }
-            File knownFile = new File(GreenplumAgentApplication.resolveDataDir(), "known-users.txt");
-            if (knownFile.exists()) {
-                Files.readAllLines(knownFile.toPath(), StandardCharsets.UTF_8).stream()
-                    .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                    .map(String::toLowerCase).forEach(allEmails::add);
-            }
+            agentDao.loadKnownUsers().forEach(allEmails::add);
             List<String> sorted = allEmails.stream().sorted().collect(java.util.stream.Collectors.toList());
             List<Map<String, String>> result = new ArrayList<>();
             for (String em : sorted) {
@@ -735,10 +711,7 @@ public class ChatController {
         if (email.isEmpty())
             return ResponseEntity.ok(Map.of("success", false, "error", "Email required."));
         try {
-            Map<String, String> map = new LinkedHashMap<>(loadUserRoleMap());
-            if (role.isEmpty()) map.remove(email);
-            else map.put(email, role);
-            saveUserRoleMap(map);
+            agentDao.saveUserRole(email, role);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
@@ -833,100 +806,7 @@ public class ChatController {
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private File getGlobalPromptFile() {
-        return new File(GreenplumAgentApplication.resolveDataDir(), "global-prompt.txt");
-    }
-
-    private File getAllowlistFile() {
-        return new File(GreenplumAgentApplication.resolveDataDir(), "allowed-users.txt");
-    }
-
-    private String loadGlobalPrompt() {
-        try {
-            File gf = getGlobalPromptFile();
-            return gf.exists() ? Files.readString(gf.toPath(), StandardCharsets.UTF_8).trim() : "";
-        } catch (Exception e) {
-            log.warn("[ADMIN] Could not read global prompt: {}", e.getMessage());
-            return "";
-        }
-    }
-
-    private File getUserPrefsFile(String userId) {
-        File dir = new File(GreenplumAgentApplication.resolveDataDir()
-                + File.separator + "users" + File.separator + userId);
-        dir.mkdirs();
-        return new File(dir, "user-prefs.txt");
-    }
-
-    private String loadUserPrefs(String userId) {
-        try {
-            File f = getUserPrefsFile(userId);
-            return f.exists() ? Files.readString(f.toPath(), StandardCharsets.UTF_8).trim() : "";
-        } catch (Exception e) {
-            log.warn("[PREFS] Could not read prefs for {}: {}", userId, e.getMessage());
-            return "";
-        }
-    }
-
     private static final String ADMIN_ROLE = "ADMIN";
-
-    private File getRolesListFile() {
-        return new File(GreenplumAgentApplication.resolveDataDir(), "roles-list.txt");
-    }
-
-    private File getUserRoleMapFile() {
-        return new File(GreenplumAgentApplication.resolveDataDir(), "user-role-map.txt");
-    }
-
-    private List<String> loadRolesList() {
-        List<String> roles = new ArrayList<>();
-        roles.add(ADMIN_ROLE);
-        try {
-            File f = getRolesListFile();
-            if (f.exists()) {
-                Files.readAllLines(f.toPath(), StandardCharsets.UTF_8).stream()
-                    .map(String::trim)
-                    .filter(l -> !l.isEmpty() && !l.startsWith("#") && !l.equalsIgnoreCase(ADMIN_ROLE))
-                    .forEach(roles::add);
-            }
-        } catch (Exception e) {
-            log.warn("[ROLES] Could not read roles list: {}", e.getMessage());
-        }
-        return roles;
-    }
-
-    private void saveRolesList(List<String> roles) throws java.io.IOException {
-        List<String> toWrite = roles.stream()
-            .filter(r -> !r.equalsIgnoreCase(ADMIN_ROLE))
-            .collect(java.util.stream.Collectors.toList());
-        Files.write(getRolesListFile().toPath(), toWrite, StandardCharsets.UTF_8);
-    }
-
-    private Map<String, String> loadUserRoleMap() {
-        Map<String, String> map = new LinkedHashMap<>();
-        try {
-            File f = getUserRoleMapFile();
-            if (!f.exists()) return map;
-            for (String line : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) {
-                line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                int idx = line.indexOf('=');
-                if (idx < 0) continue;
-                String em   = line.substring(0, idx).trim().toLowerCase();
-                String role = line.substring(idx + 1).trim();
-                if (!em.isEmpty() && !role.isEmpty()) map.put(em, role);
-            }
-        } catch (Exception e) {
-            log.warn("[ROLES] Could not read user role map: {}", e.getMessage());
-        }
-        return map;
-    }
-
-    private void saveUserRoleMap(Map<String, String> map) throws java.io.IOException {
-        List<String> lines = new ArrayList<>();
-        map.forEach((em, role) -> lines.add(em + " = " + role));
-        Files.write(getUserRoleMapFile().toPath(), lines, StandardCharsets.UTF_8);
-    }
 
     private boolean isPermanentAdmin(String email) {
         if (email == null || email.isBlank()) return false;
@@ -942,34 +822,16 @@ public class ChatController {
     private String loadUserRole(String email) {
         if (email == null || email.isBlank()) return ADMIN_ROLE;
         if (isPermanentAdmin(email)) return ADMIN_ROLE;
-        Map<String, String> map = loadUserRoleMap();
-        return map.getOrDefault(email.toLowerCase().trim(), ADMIN_ROLE);
+        return agentDao.loadUserRoleMap().getOrDefault(email.toLowerCase().trim(), ADMIN_ROLE);
     }
 
-    private File getConfigFile(String userId) {
-        File dir = new File(GreenplumAgentApplication.resolveDataDir()
-                + File.separator + "users" + File.separator + userId);
-        dir.mkdirs();
-        return new File(dir, "config.json");
-    }
-
-    @SuppressWarnings("unchecked")
     private Map<String, String> loadOrSeedConfig(String userId, Map<String, String> fallback) {
-        File f = getConfigFile(userId);
-        if (f.exists()) {
-            try {
-                return OBJECT_MAPPER.readValue(
-                        Files.readString(f.toPath(), StandardCharsets.UTF_8), LinkedHashMap.class);
-            } catch (Exception e) {
-                log.warn("[CONFIG] Cannot read config for {}: {}", userId, e.getMessage());
-            }
-        }
+        Map<String, String> config = agentDao.loadUserConfig(userId);
+        if (!config.isEmpty()) return config;
         // Cloud Foundry restart recovery: browser sends config in every request
         if (fallback != null && !fallback.isEmpty()) {
             try {
-                Files.writeString(f.toPath(),
-                        OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(fallback),
-                        StandardCharsets.UTF_8);
+                agentDao.saveUserConfig(userId, fallback);
                 log.info("[CONFIG] Re-seeded config for user {} from browser payload", userId);
             } catch (Exception e) {
                 log.warn("[CONFIG] Cannot seed config for {}: {}", userId, e.getMessage());
@@ -1127,13 +989,12 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
         }
         try {
-            File sessionsFile = getSessionsFile(userId.trim());
-            if (!sessionsFile.exists()) {
+            String raw = agentDao.loadUserSessions(userId.trim());
+            if (raw == null || raw.isBlank()) {
                 return ResponseEntity.ok(Map.of("success", false));
             }
             @SuppressWarnings("unchecked")
-            Map<String, Object> data = OBJECT_MAPPER.readValue(
-                    Files.readString(sessionsFile.toPath(), StandardCharsets.UTF_8), Map.class);
+            Map<String, Object> data = OBJECT_MAPPER.readValue(raw, Map.class);
             data.put("success", true);
             return ResponseEntity.ok(data);
         } catch (Exception e) {
@@ -1151,22 +1012,14 @@ public class ChatController {
         try {
             Map<String, Object> data = new LinkedHashMap<>(request);
             data.remove("userId");
-            Files.writeString(getSessionsFile(userId.trim()).toPath(),
-                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data),
-                    StandardCharsets.UTF_8);
+            agentDao.saveUserSessions(userId.trim(),
+                    OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data));
             log.debug("[SESSIONS] Saved for user {}", userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("[SESSIONS] Save failed for {}: {}", userId, e.getMessage());
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
         }
-    }
-
-    private File getSessionsFile(String userId) {
-        File dir = new File(GreenplumAgentApplication.resolveDataDir()
-                + File.separator + "users" + File.separator + userId);
-        dir.mkdirs();
-        return new File(dir, "sessions.json");
     }
 
     // -------------------------------------------------------------------------
@@ -1180,7 +1033,7 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId required"));
         }
         try {
-            List<Map<String, String>> favs = loadFavourites(userId);
+            List<Map<String, String>> favs = parseFavourites(agentDao.loadUserFavourites(userId));
             return ResponseEntity.ok(Map.of("success", true, "favourites", favs));
         } catch (Exception e) {
             log.error("[FAV] List failed for {}: {}", userId, e.getMessage());
@@ -1202,7 +1055,7 @@ public class ChatController {
         if (id.isEmpty())    id    = "fav-" + System.currentTimeMillis();
 
         try {
-            List<Map<String, String>> favs = loadFavourites(userId);
+            List<Map<String, String>> favs = parseFavourites(agentDao.loadUserFavourites(userId));
             String finalId    = id;
             String finalLabel = label;
             boolean updated   = false;
@@ -1224,7 +1077,7 @@ public class ChatController {
                 newFav.put("createdAt", LocalDateTime.now().toString());
                 favs.add(0, newFav);
             }
-            persistFavourites(userId, favs);
+            agentDao.saveUserFavourites(userId, OBJECT_MAPPER.writeValueAsString(favs));
             log.info("[FAV] Saved '{}' for user {}", finalLabel, userId);
             return ResponseEntity.ok(Map.of("success", true, "id", finalId));
         } catch (Exception e) {
@@ -1241,9 +1094,9 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId and id required"));
         }
         try {
-            List<Map<String, String>> favs = loadFavourites(userId);
+            List<Map<String, String>> favs = parseFavourites(agentDao.loadUserFavourites(userId));
             favs.removeIf(f -> id.equals(f.get("id")));
-            persistFavourites(userId, favs);
+            agentDao.saveUserFavourites(userId, OBJECT_MAPPER.writeValueAsString(favs));
             log.info("[FAV] Deleted {} for user {}", id, userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
@@ -1252,29 +1105,15 @@ public class ChatController {
         }
     }
 
-    private File getFavouritesFile(String userId) {
-        File dir = new File(GreenplumAgentApplication.resolveDataDir()
-                + File.separator + "users" + File.separator + userId);
-        dir.mkdirs();
-        return new File(dir, "favourites.json");
-    }
-
     @SuppressWarnings("unchecked")
-    private List<Map<String, String>> loadFavourites(String userId) {
-        File f = getFavouritesFile(userId);
-        if (!f.exists()) return new ArrayList<>();
+    private List<Map<String, String>> parseFavourites(String json) {
+        if (json == null || json.isBlank()) return new ArrayList<>();
         try {
-            return OBJECT_MAPPER.readValue(Files.readString(f.toPath(), StandardCharsets.UTF_8), List.class);
+            return OBJECT_MAPPER.readValue(json, List.class);
         } catch (Exception e) {
-            log.warn("[FAV] Cannot read favourites for {}: {}", userId, e.getMessage());
+            log.warn("[FAV] Cannot parse favourites JSON: {}", e.getMessage());
             return new ArrayList<>();
         }
-    }
-
-    private void persistFavourites(String userId, List<Map<String, String>> favs) throws Exception {
-        Files.writeString(getFavouritesFile(userId).toPath(),
-                OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(favs),
-                StandardCharsets.UTF_8);
     }
 
     private static boolean isCausedByTimeout(Throwable t) {
@@ -1285,15 +1124,4 @@ public class ChatController {
         return false;
     }
 
-    private void deleteDirectory(File dir) {
-        if (dir == null || !dir.exists()) return;
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.isDirectory()) deleteDirectory(f);
-                else f.delete();
-            }
-        }
-        dir.delete();
-    }
 }
