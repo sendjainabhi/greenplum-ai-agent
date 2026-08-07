@@ -72,6 +72,13 @@ public class PostgresAgentDao implements AgentDao {
                     ON CONFLICT(email) DO NOTHING
                     """, email);
         }
+        // Remove role assignments for users no longer in the allowlist
+        if (!emails.isEmpty()) {
+            String placeholders = emails.stream().map(e -> "LOWER(?)").collect(Collectors.joining(", "));
+            List<Object> params = new ArrayList<>(emails);
+            jdbc.update("DELETE FROM user_roles WHERE LOWER(email) NOT IN (" + placeholders + ")",
+                    params.toArray());
+        }
     }
 
     @Override
@@ -178,6 +185,12 @@ public class PostgresAgentDao implements AgentDao {
                     ON CONFLICT(email) DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()
                     """, em, role);
         }
+    }
+
+    @Override
+    public void deleteUserRole(String email) {
+        if (email == null || email.isBlank()) return;
+        jdbc.update("DELETE FROM user_roles WHERE LOWER(email) = LOWER(?)", email.trim());
     }
 
     // --- User config ---

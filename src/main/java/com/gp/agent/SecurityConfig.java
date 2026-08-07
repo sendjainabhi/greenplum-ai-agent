@@ -1,6 +1,7 @@
 package com.gp.agent;
 
 import com.gp.agent.db.AgentDao;
+import com.gp.agent.db.AuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -17,6 +18,8 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
+import java.util.Optional;
+
 @Configuration
 @EnableWebSecurity
 @Profile("cloud")
@@ -25,9 +28,11 @@ public class SecurityConfig {
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     private final AgentDao agentDao;
+    private final AuditService auditService;
 
-    public SecurityConfig(AgentDao agentDao) {
-        this.agentDao = agentDao;
+    public SecurityConfig(AgentDao agentDao, Optional<AuditService> auditService) {
+        this.agentDao     = agentDao;
+        this.auditService = auditService.orElse(null);
     }
 
     @Bean
@@ -50,6 +55,11 @@ public class SecurityConfig {
             .logout(logout -> logout
                 .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "GET"))
                 .logoutSuccessHandler((req, res, auth) -> {
+                    if (auth != null && auth.getPrincipal() instanceof OidcUser oidcUser) {
+                        String email = oidcUser.getAttribute("user_name");
+                        if (email == null || email.isBlank()) email = oidcUser.getEmail();
+                        if (email != null && auditService != null) auditService.log(email, "LOGOUT");
+                    }
                     String authDomain = readAuthDomain();
                     res.sendRedirect(authDomain != null ? authDomain + "/logout.do" : "/");
                 })
@@ -83,6 +93,7 @@ public class SecurityConfig {
 
             log.info("[SSO] Access granted for {}", email);
             agentDao.addKnownUser(email);
+            if (auditService != null) auditService.log(email, "LOGIN");
             return user;
         };
     }

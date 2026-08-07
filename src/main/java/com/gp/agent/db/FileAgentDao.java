@@ -203,6 +203,14 @@ public class FileAgentDao implements AgentDao {
         saveUserRoleMap(map);
     }
 
+    @Override
+    public void deleteUserRole(String email) {
+        if (email == null || email.isBlank()) return;
+        Map<String, String> map = new LinkedHashMap<>(loadUserRoleMap());
+        map.remove(email.toLowerCase().trim());
+        saveUserRoleMap(map);
+    }
+
     // --- User config ---
 
     @Override

@@ -17,10 +17,11 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 6. [Role-Based Access Control](#role-based-access-control)
 7. [Platform Services](#platform-services)
 8. [PostgreSQL Database](#postgresql-database)
-9. [Deployment](#deployment)
-10. [Architecture](#architecture)
-11. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
-12. [Troubleshooting](#troubleshooting)
+9. [Data Retention](#data-retention)
+10. [Deployment](#deployment)
+11. [Architecture](#architecture)
+12. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -64,6 +65,7 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 ### 📄 PDF Export
 
 - **One-click export** — Export PDF button below every AI response
+- **Large document support** — responses of any length exported correctly; rendered page-by-page to stay within browser canvas limits (fixes blank PDF on 30+ page responses)
 - **Layout safe** — tables, code blocks, and charts never split across pages
 - **Charts included** — visualisations are captured and embedded in the PDF
 - **Greenplum branding** — forest-green header with logo
@@ -96,10 +98,23 @@ Each user can set personal AI instructions that apply only to their sessions and
 
 ### 🔐 Admin Panel
 
-- Three-tab interface protected by an admin PIN
+- Four-tab interface protected by an admin PIN
 - **Global Prompt** — pre-training instructions applied to all users; define role boundaries here
 - **Access Control** — add/remove users with a mandatory role assignment per user
-- **Roles** — create/delete custom roles and reassign roles to existing users
+- **Roles** — create/delete custom roles; reassign or delete role assignments for any user
+- **Audit Log** — visible only to permanent admins; shows login, logout, and query events with date filtering and sortable columns
+
+### 📋 Audit Log
+
+Server-side activity log for permanent admins to monitor app usage.
+
+- **Events logged** — `LOGIN`, `LOGOUT`, `QUERY` (no query content, no IP address, no session IDs)
+- **Fields** — email address, timestamp, action type
+- **Retention** — 15 days; older entries are automatically purged nightly
+- **Access** — only permanent admins (configured via `PERMANENT_ADMIN_EMAILS` in `manifest.yml`) can view the audit tab
+- **Filters** — date range filter (from/to) with reset
+- **Sorting** — click any column header (Timestamp, Email, Action) to sort ascending/descending
+- **Pagination** — 50 rows per page
 
 ### 🎭 Role-Based Access Control
 
@@ -229,13 +244,31 @@ Email allowlist stored in the `allowed_users` table in PostgreSQL.
 
 ### Tab 3 — Roles
 
-Manage custom role names and assign roles to all known users.
+Manage custom role names and assign roles to all users.
 
 - **ADMIN** is the only pre-built role — it cannot be deleted and grants full access
 - Add new roles (e.g. `READ_ONLY`, `AMER_ANALYST`, `EMEA_VIEWER`) using the text field
 - Role names are uppercase alphanumeric + underscore only
 - A role cannot be deleted while it is assigned to any user — reassign first
-- **User Role Assignments** panel shows every user from the allowlist and known-users with an inline dropdown to change their role
+- **User Role Assignments** panel shows every user from the allowlist with an inline dropdown to change their role
+- Users removed from the allowlist appear with a red strikethrough and a `removed` badge — their role assignment entry can be deleted with the **✕** button
+- Removing a user from Access Control automatically cascades and removes their role assignment from the database
+
+### Tab 4 — Audit Log (permanent admins only)
+
+Activity log for monitoring who is accessing the application.
+
+| Column | Content |
+| :--- | :--- |
+| Timestamp | UTC timestamp of the event |
+| Email | Broadcom email of the user |
+| Action | `LOGIN`, `LOGOUT`, or `QUERY` |
+
+- **Date filter** — filter by from/to date; click **Reset** to clear
+- **Sorting** — click any column header to sort; click again to toggle direction (▲/▼)
+- **Pagination** — 50 rows per page; navigate with **< Prev** / **Next >**
+- **Retention** — rows older than 15 days are purged automatically each night at 02:15 UTC
+- Only visible when the authenticated user's email is in `PERMANENT_ADMIN_EMAILS`
 
 ---
 
@@ -401,6 +434,7 @@ All persistent app data is stored in a Tanzu Postgres `db-small` instance (`gree
 | `user_sessions` | Per-user chat session list and history (JSON) | `user_id` (PK), `data`, `updated_at` |
 | `user_favourites` | Per-user saved favourite prompts (JSON array) | `user_id` (PK), `data`, `updated_at` |
 | `user_memory` | Per-user, per-session LangChain4j chat memory | `user_id` + `session_id` (PK), `messages`, `updated_at` |
+| `user_audit_log` | Server-side activity log (login, logout, query events) | `id` (PK), `email`, `action`, `ts` |
 
 ### Data Flow
 
@@ -409,10 +443,13 @@ Every user action updates the database immediately — no restart or manual expo
 | User Action | Table Updated |
 | :--- | :--- |
 | Admin saves global prompt | `app_config` (upsert on `key = 'global_prompt'`) |
-| Admin updates allowlist | `allowed_users` (full replace) |
+| Admin updates allowlist | `allowed_users` (full replace); cascades to delete removed users from `user_roles` |
 | Admin adds / removes a role | `roles` |
 | Admin assigns role to user | `user_roles` (upsert on `email`) |
+| Admin deletes a user's role assignment | `user_roles` (delete by `email`) |
 | User logs in for the first time | `known_users` (insert on conflict do nothing) |
+| User logs in / logs out | `user_audit_log` (insert `LOGIN` / `LOGOUT`) |
+| User sends a query | `user_audit_log` (insert `QUERY`) |
 | User saves preferences | `user_preferences` (upsert on `user_id`) |
 | User sends / receives a message | `user_memory` (upsert on `user_id + session_id`) |
 | User saves / updates sessions | `user_sessions` (upsert on `user_id`) |
@@ -437,8 +474,20 @@ Migrations live in `src/main/resources/db/` and are named `V{n}__{description}.s
 | Migration | Tables Created |
 | :--- | :--- |
 | `V1__schema.sql` | `app_config`, `allowed_users`, `known_users`, `roles`, `user_roles`, `user_config`, `user_preferences`, `user_sessions`, `user_favourites`, `user_memory` |
+| `V2__audit_log.sql` | `user_audit_log` (with indexes on `ts` and `email`) |
 
 Flyway runs automatically on every startup and applies any pending migrations. Completed migrations are tracked in `flyway_schema_history`.
+
+### Data Retention
+
+Automated nightly jobs purge old data to keep storage bounded:
+
+| Data | Retention | Schedule (UTC) | Table |
+| :--- | :--- | :--- | :--- |
+| Audit log entries | 15 days | 02:15 | `user_audit_log` |
+| Chat memory (AI context) | 30 days | 02:30 | `user_memory` |
+
+Jobs run only when the app is in PostgreSQL mode (`gp.agent.storage=postgres`). Inactive sessions older than the threshold are removed silently — no user-visible impact.
 
 ### Multi-App Access
 
@@ -762,7 +811,9 @@ Browser  (index.html · app.js · style.css)
     ├── POST /api/admin/roles/save        → create a role
     ├── POST /api/admin/roles/delete      → delete a role
     ├── GET  /api/admin/user-roles        → all users with assigned roles
-    └── POST /api/admin/user-roles/save   → assign or update a user's role
+    ├── POST /api/admin/user-roles/save   → assign or update a user's role
+    ├── POST /api/admin/user-roles/delete → delete a user's role assignment
+    └── GET  /api/admin/audit             → paginated audit log (permanent admins only)
     │
     │  SSO
     ├── GET  /oauth2/authorization/sso → redirect to AuthHub

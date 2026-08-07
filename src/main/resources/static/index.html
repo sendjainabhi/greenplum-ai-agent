@@ -7,6 +7,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
@@ -187,6 +189,10 @@
                         style="background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
                     Roles
                 </button>
+                <button id="adminTabAudit" onclick="switchAdminTab('Audit')"
+                        style="display:none; background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
+                    Audit Log
+                </button>
             </div>
 
             <!-- Panel: Global Prompt -->
@@ -263,6 +269,46 @@
                         <button class="btn-cancel" onclick="loadUserRoleAssignments()" style="font-size:0.8em; padding:3px 10px;">↻ Refresh</button>
                     </div>
                     <div id="userRoleAssignments" style="max-height:240px; overflow-y:auto;"></div>
+                </div>
+            </div>
+
+            <!-- Panel: Audit Log (permanent admins only) -->
+            <div id="adminPanelAudit" style="display:none;">
+                <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
+                    Server-side events only: <strong>LOGIN</strong>, <strong>LOGOUT</strong>, <strong>QUERY</strong>.
+                    Records older than 14 days are purged automatically.
+                </p>
+                <!-- Date filter -->
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+                    <label style="font-size:0.85em; color:var(--muted-text); white-space:nowrap;">From</label>
+                    <input type="date" id="auditFrom"
+                           style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.85em; background:var(--surface-bg,#fff); color:var(--text-color,#111);">
+                    <label style="font-size:0.85em; color:var(--muted-text); white-space:nowrap;">To</label>
+                    <input type="date" id="auditTo"
+                           style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.85em; background:var(--surface-bg,#fff); color:var(--text-color,#111);">
+                    <button class="btn-save" onclick="loadAuditLog(0)" style="padding:5px 14px; font-size:0.85em;">Apply</button>
+                    <button class="btn-cancel" onclick="resetAuditFilter()" style="padding:5px 10px; font-size:0.85em;">Reset</button>
+                </div>
+                <!-- Table -->
+                <div style="overflow-x:auto; max-height:280px; overflow-y:auto; border:1px solid var(--border-subtle); border-radius:4px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.85em;">
+                        <thead>
+                            <tr style="background:var(--sidebar-bg); position:sticky; top:0;">
+                                <th onclick="sortAuditBy('ts')"    style="padding:8px 10px; text-align:left; font-weight:600; border-bottom:1px solid var(--border-subtle); white-space:nowrap; cursor:pointer; user-select:none;">Timestamp <span id="auditSort_ts"></span></th>
+                                <th onclick="sortAuditBy('email')" style="padding:8px 10px; text-align:left; font-weight:600; border-bottom:1px solid var(--border-subtle); cursor:pointer; user-select:none;">Email <span id="auditSort_email"></span></th>
+                                <th onclick="sortAuditBy('action')" style="padding:8px 10px; text-align:left; font-weight:600; border-bottom:1px solid var(--border-subtle); cursor:pointer; user-select:none;">Action <span id="auditSort_action"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="auditTableBody">
+                            <tr><td colspan="3" style="padding:16px; text-align:center; color:var(--muted-text);">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; font-size:0.83em;">
+                    <button class="btn-cancel" id="auditPrevBtn" onclick="auditChangePage(-1)" style="padding:4px 12px;" disabled>&#8592; Prev</button>
+                    <span id="auditPageInfo" style="color:var(--muted-text);">—</span>
+                    <button class="btn-cancel" id="auditNextBtn" onclick="auditChangePage(1)"  style="padding:4px 12px;" disabled>Next &#8594;</button>
                 </div>
             </div>
 

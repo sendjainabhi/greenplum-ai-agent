@@ -41,6 +41,7 @@ public class ChatController {
     private final ChatMemoryStore chatMemoryStore;
     private final VcapServicesConfig vcapConfig;
     private final AgentDao agentDao;
+    private final com.gp.agent.db.AuditService auditService;
 
     // Agent cache — keyed by userId, rebuilt only when config changes.
     // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
@@ -57,11 +58,13 @@ public class ChatController {
     // apply immediately to every user and session without any restart.
 
     public ChatController(ChatMemoryProvider memoryProvider, ChatMemoryStore chatMemoryStore,
-                          VcapServicesConfig vcapConfig, AgentDao agentDao) {
+                          VcapServicesConfig vcapConfig, AgentDao agentDao,
+                          java.util.Optional<com.gp.agent.db.AuditService> auditService) {
         this.memoryProvider  = memoryProvider;
         this.chatMemoryStore = chatMemoryStore;
         this.vcapConfig      = vcapConfig;
         this.agentDao        = agentDao;
+        this.auditService    = auditService.orElse(null);
     }
 
     @PostConstruct
@@ -113,15 +116,17 @@ public class ChatController {
             String email  = oidcUser.getAttribute("user_name");
             if (email == null || email.isBlank()) email = oidcUser.getEmail();
             if (email == null) email = userId;
-            response.put("authenticated", true);
-            response.put("userId",        userId);
-            response.put("email",         email);
+            response.put("authenticated",    true);
+            response.put("userId",           userId);
+            response.put("email",            email);
+            response.put("isPermanentAdmin", isPermanentAdmin(email));
             log.debug("[AUTH] Status: user {} (sub={})", email, userId);
         } else {
             // Local dev mode (DevSecurityConfig — no SSO): return a default user
-            response.put("authenticated", true);
-            response.put("userId",        "local-dev-user");
-            response.put("email",         "local-dev");
+            response.put("authenticated",    true);
+            response.put("userId",           "local-dev-user");
+            response.put("email",            "local-dev");
+            response.put("isPermanentAdmin", false);
         }
 
         return ResponseEntity.ok(response);
@@ -264,6 +269,7 @@ public class ChatController {
             String raw      = chatFn.apply(memoryId, finalPrompt);
             String response = sanitizeResponse(raw);
             log.info("[CHAT] user={} session={} length={}", userId, sessionId, response.length());
+            if (auditService != null && !userEmail.isBlank()) auditService.log(userEmail, "QUERY");
 
             // Pre-validate that our static ObjectMapper can serialize this string.
             // ESCAPE_NON_ASCII on Spring's Jackson handles the actual HTTP write,
@@ -682,18 +688,22 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         try {
             Map<String, String> assignments = agentDao.loadUserRoleMap();
-            // Merge allowlist + known-users so all users are visible even before first login
-            java.util.Set<String> allEmails = new java.util.LinkedHashSet<>();
+            // Active users (from allowlist) + users with an explicit role assignment
+            // known_users intentionally excluded: once a role entry is deleted for a
+            // removed user, they should disappear from this panel entirely
+            java.util.Set<String> activeEmails = new java.util.LinkedHashSet<>();
             Arrays.stream(agentDao.loadAllowlist().split("[\r\n]+"))
                     .map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                    .map(String::toLowerCase).forEach(allEmails::add);
-            agentDao.loadKnownUsers().forEach(allEmails::add);
+                    .map(String::toLowerCase).forEach(activeEmails::add);
+            java.util.Set<String> allEmails = new java.util.LinkedHashSet<>(activeEmails);
+            assignments.keySet().forEach(allEmails::add); // include deleted users with lingering role entries
             List<String> sorted = allEmails.stream().sorted().collect(java.util.stream.Collectors.toList());
             List<Map<String, String>> result = new ArrayList<>();
             for (String em : sorted) {
                 Map<String, String> entry = new LinkedHashMap<>();
-                entry.put("email", em);
-                entry.put("role", assignments.getOrDefault(em, ADMIN_ROLE));
+                entry.put("email",  em);
+                entry.put("role",   assignments.getOrDefault(em, ADMIN_ROLE));
+                entry.put("active", activeEmails.contains(em) ? "true" : "false");
                 result.add(entry);
             }
             return ResponseEntity.ok(Map.of("success", true, "assignments", result));
@@ -712,6 +722,22 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Email required."));
         try {
             agentDao.saveUserRole(email, role);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/user-roles/delete")
+    ResponseEntity<Map<String, Object>> deleteUserRoleEndpoint(@RequestBody Map<String, String> body) {
+        if (!adminPinHash.equals(body.getOrDefault("pinHash", "").trim()))
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        String email = body.getOrDefault("email", "").trim().toLowerCase();
+        if (email.isEmpty())
+            return ResponseEntity.ok(Map.of("success", false, "error", "Email required."));
+        try {
+            agentDao.deleteUserRole(email);
+            log.info("[ADMIN] Deleted role assignment for {}", email);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));

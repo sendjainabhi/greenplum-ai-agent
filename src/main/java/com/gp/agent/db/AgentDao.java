@@ -34,6 +34,7 @@ public interface AgentDao {
     Map<String, String> loadUserRoleMap();
     void saveUserRoleMap(Map<String, String> map);
     void saveUserRole(String email, String role);
+    void deleteUserRole(String email);
 
     // --- Per-user data ---
     Map<String, String> loadUserConfig(String userId);

@@ -81,9 +81,10 @@ function toggleTheme() {
 // USER IDENTITY  (username chosen at PIN setup — survives browser cache clear)
 // =============================================================================
 
-let CURRENT_USER_ID = localStorage.getItem('gp_user_id') || null;
-let USER_EMAIL      = '';
-let CF_MODE         = false;
+let CURRENT_USER_ID    = localStorage.getItem('gp_user_id') || null;
+let USER_EMAIL         = '';
+let CF_MODE            = false;
+let IS_PERMANENT_ADMIN = false;
 
 // --- SSO logout ---
 function logout() {
@@ -124,7 +125,7 @@ function closeAdminModal() {
 }
 
 function switchAdminTab(tab) {
-    ['Prompt', 'Access', 'Roles'].forEach(t => {
+    ['Prompt', 'Access', 'Roles', 'Audit'].forEach(t => {
         const panel = document.getElementById('adminPanel' + t);
         const btn   = document.getElementById('adminTab'   + t);
         if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -138,7 +139,123 @@ function switchAdminTab(tab) {
         populateRoleDropdowns();
     } else if (tab === 'Roles') {
         loadRolesTab();
+    } else if (tab === 'Audit') {
+        loadAuditLog(0);
     }
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+let auditCurrentPage = 0;
+let auditRowsCache   = [];
+let auditSortCol     = 'ts';
+let auditSortDir     = 'desc';
+
+const AUDIT_ACTION_STYLE = {
+    LOGIN:  'background:#dbeafe;color:#1d4ed8;',
+    LOGOUT: 'background:#fef3c7;color:#92400e;',
+    QUERY:  'background:#f0fdf4;color:#16a34a;'
+};
+
+async function loadAuditLog(page) {
+    auditCurrentPage = page;
+    const from = (document.getElementById('auditFrom') || {}).value || '';
+    const to   = (document.getElementById('auditTo')   || {}).value || '';
+    const tbody    = document.getElementById('auditTableBody');
+    const pageInfo = document.getElementById('auditPageInfo');
+    const prevBtn  = document.getElementById('auditPrevBtn');
+    const nextBtn  = document.getElementById('auditNextBtn');
+
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--muted-text);">Loading…</td></tr>';
+
+    try {
+        const params = new URLSearchParams({ page, size: 50 });
+        if (from) params.append('from', from);
+        if (to)   params.append('to',   to);
+        const res  = await fetch('/api/admin/audit?' + params);
+        if (res.status === 403) {
+            if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="padding:16px;text-align:center;color:#ef4444;">Access denied — permanent admins only</td></tr>';
+            return;
+        }
+        const data = await res.json();
+        if (!data.rows || data.rows.length === 0) {
+            auditRowsCache = [];
+            if (tbody)    tbody.innerHTML = '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--muted-text);">No records found</td></tr>';
+            if (pageInfo) pageInfo.textContent = 'No records';
+            if (prevBtn)  prevBtn.disabled = true;
+            if (nextBtn)  nextBtn.disabled = true;
+            return;
+        }
+
+        auditRowsCache = data.rows;
+        renderAuditRows();
+
+        const total      = data.total      || 0;
+        const totalPages = data.totalPages || 1;
+        const curPage    = data.page       || 0;
+        if (pageInfo) pageInfo.textContent = `Page ${curPage + 1} of ${totalPages} (${total} records)`;
+        if (prevBtn)  prevBtn.disabled = curPage === 0;
+        if (nextBtn)  nextBtn.disabled = curPage >= totalPages - 1;
+
+    } catch (e) {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="padding:16px;text-align:center;color:#ef4444;">Error loading audit log</td></tr>';
+    }
+}
+
+function renderAuditRows() {
+    const tbody = document.getElementById('auditTableBody');
+    if (!tbody || !auditRowsCache.length) return;
+
+    const sorted = [...auditRowsCache].sort((a, b) => {
+        let va = a[auditSortCol] || '', vb = b[auditSortCol] || '';
+        if (auditSortCol === 'ts') { va = new Date(va); vb = new Date(vb); }
+        else { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+        if (va < vb) return auditSortDir === 'asc' ? -1 :  1;
+        if (va > vb) return auditSortDir === 'asc' ?  1 : -1;
+        return 0;
+    });
+
+    tbody.innerHTML = sorted.map(r => {
+        const ts     = r.ts ? new Date(r.ts).toLocaleString() : '—';
+        const action = r.action || '';
+        const style  = AUDIT_ACTION_STYLE[action] || 'background:#f1f5f9;color:#475569;';
+        return `<tr>
+            <td style="padding:7px 10px;border-bottom:1px solid var(--border-subtle);white-space:nowrap;font-size:0.82em;color:var(--muted-text);">${ts}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid var(--border-subtle);font-size:0.85em;">${r.email || ''}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid var(--border-subtle);"><span style="border-radius:3px;padding:2px 8px;font-size:0.82em;font-weight:600;${style}">${action}</span></td>
+        </tr>`;
+    }).join('');
+
+    // Update sort indicators
+    ['ts', 'email', 'action'].forEach(col => {
+        const el = document.getElementById('auditSort_' + col);
+        if (el) el.textContent = col === auditSortCol ? (auditSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    });
+}
+
+function sortAuditBy(col) {
+    if (auditSortCol === col) {
+        auditSortDir = auditSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        auditSortCol = col;
+        auditSortDir = col === 'ts' ? 'desc' : 'asc';
+    }
+    renderAuditRows();
+}
+
+function auditChangePage(delta) {
+    loadAuditLog(auditCurrentPage + delta);
+}
+
+function resetAuditFilter() {
+    const f = document.getElementById('auditFrom');
+    const t = document.getElementById('auditTo');
+    if (f) f.value = '';
+    if (t) t.value = '';
+    auditSortCol = 'ts';
+    auditSortDir = 'desc';
+    loadAuditLog(0);
 }
 
 // =============================================================================
@@ -257,6 +374,9 @@ async function verifyAdminPin() {
         document.getElementById('adminSaveResult').style.display = 'none';
         document.getElementById('adminAuthSection').style.display = 'none';
         document.getElementById('adminEditorSection').style.display = 'block';
+        // Show Audit tab only for permanent admins
+        const auditTabBtn = document.getElementById('adminTabAudit');
+        if (auditTabBtn) auditTabBtn.style.display = IS_PERMANENT_ADMIN ? '' : 'none';
         // Start on Prompt tab; load allowlist + roles in background
         switchAdminTab('Prompt');
         loadAllowlist();
@@ -612,15 +732,42 @@ function renderUserRoleAssignments(assignments) {
         el.innerHTML = '<p style="font-size:0.85em;color:var(--muted-text);margin:0;">No users found yet. Users appear here after their first login.</p>';
         return;
     }
-    el.innerHTML = assignments.map(({email, role}) => `
+    el.innerHTML = assignments.map(({email, role, active}) => {
+        const isActive  = active !== 'false';
+        const emailStyle = isActive
+            ? 'flex:1;font-size:0.85em;color:var(--text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+            : 'flex:1;font-size:0.85em;color:#ef4444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through;';
+        const badge = isActive ? '' : '<span style="font-size:0.72em;background:#fee2e2;color:#ef4444;border-radius:3px;padding:1px 5px;margin-left:4px;flex-shrink:0;">removed</span>';
+        return `
         <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border-subtle);">
-            <span style="flex:1;font-size:0.85em;color:var(--text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${email}">${email}</span>
+            <span style="${emailStyle}" title="${email}">${email}</span>
+            ${badge}
             <select onchange="saveUserRole('${email}',this.value).then(ok=>{this.style.borderColor=ok?'#22c55e':'#ef4444';setTimeout(()=>this.style.borderColor='',1500);})"
                     style="padding:4px 6px;border:1px solid var(--border-subtle);border-radius:4px;font-size:0.82em;background:var(--surface-bg,#fff);color:var(--text-color,#111);min-width:130px;">
                 ${_roles.map(r => `<option value="${r}"${r === role ? ' selected' : ''}>${r}</option>`).join('')}
             </select>
-        </div>`
-    ).join('');
+            <button class="allowlist-item-remove" onclick="deleteUserRoleAssignment('${email}')" title="Remove role assignment">✕</button>
+        </div>`;
+    }).join('');
+}
+
+async function deleteUserRoleAssignment(email) {
+    if (!adminPinHashInSession) return;
+    const resultEl = document.getElementById('rolesActionResult');
+    if (resultEl) resultEl.style.display = 'none';
+    try {
+        const res  = await fetch('/api/admin/user-roles/delete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, email })
+        });
+        const data = await res.json();
+        if (data.success) {
+            await loadUserRoleAssignments();
+            if (resultEl) { resultEl.className = 'test-result test-success'; resultEl.textContent = '✅ Role assignment removed for ' + email; resultEl.style.display = 'block'; setTimeout(() => { if (resultEl) resultEl.style.display = 'none'; }, 2500); }
+        } else {
+            if (resultEl) { resultEl.className = 'test-result test-error'; resultEl.textContent = '❌ ' + (data.error || 'Failed.'); resultEl.style.display = 'block'; }
+        }
+    } catch (_) {}
 }
 
 // =============================================================================
@@ -779,8 +926,9 @@ window.onload = async function () {
             return;
         }
 
-        CURRENT_USER_ID = status.userId;
-        USER_EMAIL      = status.email || status.userId;
+        CURRENT_USER_ID    = status.userId;
+        USER_EMAIL         = status.email || status.userId;
+        IS_PERMANENT_ADMIN = status.isPermanentAdmin === true;
         localStorage.setItem('gp_user_id', CURRENT_USER_ID);
 
         // Compute initials from email (e.g. "abhishek.jain@broadcom.com" → "AJ")
@@ -1432,10 +1580,13 @@ function constructSimpleGraph(canvasId, configStr) {
     } catch (err) {}
 }
 
-function exportSinglePDF(wrapperId, btnElement) {
+async function exportSinglePDF(wrapperId, btnElement) {
     const originalText   = btnElement.innerHTML;
     btnElement.innerHTML = '⏳ Generating...';
     btnElement.disabled  = true;
+
+    let viewport   = null;
+    let savedTheme = null;
 
     const restoreTheme = (theme) => {
         if (theme) document.documentElement.setAttribute('data-theme', theme);
@@ -1506,18 +1657,16 @@ function exportSinglePDF(wrapperId, btnElement) {
     p,li,span,strong,em{color:#1a2e1f!important;}
     a{color:#2d6a4f!important;}
     h1,h2,h3,h4,h5,h6{color:#2d6a4f!important;margin:14px 0 6px;}
-    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;page-break-inside:avoid!important;}
+    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;}
     code{color:#0f4c2a!important;background:#f5f9f6!important;font-family:monospace!important;font-size:12px!important;}
-    table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;page-break-inside:avoid!important;}
+    table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;}
     th{background:#2d6a4f!important;color:#ffffff!important;padding:9px 11px!important;text-align:left!important;}
     td{padding:7px 11px!important;border:1px solid #bbf7d0!important;color:#1a2e1f!important;background:#ffffff!important;}
     tr:nth-child(even) td{background:#f0fdf4!important;}
-    tr{page-break-inside:avoid!important;}
-    .table-responsive{overflow:visible!important;page-break-inside:avoid!important;}
+    .table-responsive{overflow:visible!important;}
     .copy-btn,button{display:none!important;}
-    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;page-break-inside:avoid!important;}
-    img{max-width:100%!important;height:auto!important;page-break-inside:avoid!important;}
-    h1,h2,h3,h4{page-break-after:avoid!important;}
+    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;}
+    img{max-width:100%!important;height:auto!important;}
   </style>
 
   <div style="line-height:1.75;color:#1a2e1f;">
@@ -1529,36 +1678,61 @@ function exportSinglePDF(wrapperId, btnElement) {
   </div>
 </div>`;
 
-        const options = {
-            margin:      [10, 10, 10, 10],
-            filename:    filename,
-            image:       { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' },
-            jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' },
-            pagebreak:   { mode: ['avoid-all', 'css', 'legacy'] }
-        };
+        // Page-by-page rendering — prevents blank PDF caused by canvas height limits on large documents.
+        // A single html2canvas pass at scale 2 on a 36-page doc exceeds the ~16,384px browser canvas
+        // limit, producing a blank image. Instead we render one A4 page at a time through a fixed
+        // overflow:hidden viewport and slide the inner content upward for each page.
+        const A4_W = 794;   // ≈ 210mm at 96dpi
+        const A4_H = 1123;  // ≈ 297mm at 96dpi
 
-        // Temporarily switch to light mode so CSS variables resolve correctly in the render
-        const savedTheme = document.documentElement.getAttribute('data-theme');
+        viewport = document.createElement('div');
+        viewport.style.cssText = 'position:fixed;left:-9999px;top:0;width:' + A4_W + 'px;height:' + A4_H + 'px;overflow:hidden;background:#ffffff;';
+
+        const inner = document.createElement('div');
+        inner.style.cssText = 'position:absolute;top:0;left:0;width:100%;background:#ffffff;';
+        inner.innerHTML = pdfHtml;
+        viewport.appendChild(inner);
+        document.body.appendChild(viewport);
+
+        savedTheme = document.documentElement.getAttribute('data-theme');
         document.documentElement.removeAttribute('data-theme');
 
-        html2pdf().set(options).from(pdfHtml).save()
-            .then(() => {
-                restoreTheme(savedTheme);
-                btnElement.innerHTML = '✅ Downloaded!';
-                setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
-            })
-            .catch(err => {
-                restoreTheme(savedTheme);
-                console.error('[PDF] Generation failed:', err);
-                btnElement.innerHTML = '❌ Failed — try again';
-                setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2500);
+        // Let the browser lay out the content before measuring
+        await new Promise(r => setTimeout(r, 120));
+
+        const totalHeight = inner.scrollHeight;
+        const totalPages  = Math.max(1, Math.ceil(totalHeight / A4_H));
+        const pdf = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+
+        for (let page = 0; page < totalPages; page++) {
+            inner.style.top = -(page * A4_H) + 'px';
+            await new Promise(r => setTimeout(r, 30));
+            const canvas = await window.html2canvas(viewport, {
+                scale:           2,
+                useCORS:         true,
+                logging:         false,
+                backgroundColor: '#ffffff',
+                width:           A4_W,
+                height:          A4_H
             });
+            const imgData = canvas.toDataURL('image/jpeg', 0.92);
+            if (page > 0) pdf.addPage('a4', 'portrait');
+            pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+        }
+
+        document.body.removeChild(viewport);
+        viewport = null;
+        restoreTheme(savedTheme);
+        pdf.save(filename);
+        btnElement.innerHTML = '✅ Downloaded!';
+        setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
 
     } catch (err) {
-        console.error('[PDF] Setup failed:', err);
-        btnElement.innerHTML = originalText;
-        btnElement.disabled  = false;
+        if (viewport && document.body.contains(viewport)) document.body.removeChild(viewport);
+        restoreTheme(savedTheme);
+        console.error('[PDF] Generation failed:', err);
+        btnElement.innerHTML = '❌ Failed — try again';
+        setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2500);
     }
 }
 
