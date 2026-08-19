@@ -1,7 +1,6 @@
 package com.gp.agent.db;
 
 import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import org.slf4j.Logger;
@@ -35,7 +34,7 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
                     "SELECT messages FROM user_memory WHERE user_id = ? AND session_id = ?",
                     String.class, userId, sessionId);
             if (rows.isEmpty()) return new ArrayList<>();
-            return ChatMessageDeserializer.messagesFromJson(rows.get(0));
+            return MessageSanitizer.fromJson(rows.get(0));
         } catch (Exception e) {
             log.error("[MEMORY] Failed to read messages for {}: {}", memoryId, e.getMessage());
             return new ArrayList<>();

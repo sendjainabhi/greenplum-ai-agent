@@ -1,8 +1,8 @@
 package com.gp.agent;
 
+import com.gp.agent.db.MessageSanitizer;
 import com.gp.agent.db.PostgresChatMemoryStore;
 import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
@@ -72,7 +72,7 @@ public class AiConfig {
                 File file = getMemoryFile(memoryId);
                 if (file.exists()) {
                     String json = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-                    return ChatMessageDeserializer.messagesFromJson(json);
+                    return MessageSanitizer.fromJson(json);
                 }
             } catch (Exception e) {
                 log.error("[MEMORY] Failed to read memory for {}: {}", memoryId, e.getMessage());
