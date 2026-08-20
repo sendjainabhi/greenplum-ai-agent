@@ -71,9 +71,9 @@ public class MessageSanitizer {
             }
         } else if ("AI".equals(type)) {
             String text = textOf(node);
-            JsonNode toolReqs = node.path("toolExecutionRequests");
-            boolean hasToolReqs = toolReqs.isArray() && !toolReqs.isEmpty();
-            if ((text == null || text.isBlank()) && hasToolReqs) {
+            // Patch ALL AiMessages with null/blank text — Gemini rejects content:null
+            // whether the message has tool requests or not.
+            if (text == null || text.isBlank()) {
                 ObjectNode patched = node.deepCopy();
                 patched.put("text", " ");
                 return patched;
