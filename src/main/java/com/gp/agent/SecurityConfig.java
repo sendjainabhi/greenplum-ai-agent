@@ -18,6 +18,7 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
+import java.util.Arrays;
 import java.util.Optional;
 
 @Configuration
@@ -84,7 +85,7 @@ public class SecurityConfig {
 
             log.info("[SSO] Login attempt by {}", email);
 
-            if (!agentDao.isUserAllowed(email)) {
+            if (!isPermanentAdmin(email) && !agentDao.isUserAllowed(email)) {
                 log.warn("[SSO] Access denied for user: {}", email);
                 throw new OAuth2AuthenticationException(
                     new OAuth2Error("access_denied",
@@ -96,6 +97,14 @@ public class SecurityConfig {
             if (auditService != null) auditService.log(email, "LOGIN");
             return user;
         };
+    }
+
+    private static boolean isPermanentAdmin(String email) {
+        String env = System.getenv("PERMANENT_ADMIN_EMAILS");
+        if (env == null || env.isBlank()) return false;
+        return Arrays.stream(env.split(","))
+                .map(String::trim)
+                .anyMatch(e -> e.equalsIgnoreCase(email));
     }
 
     /** Reads auth_domain from VCAP_SERVICES p-identity credentials using simple string scan. */

@@ -42,6 +42,7 @@ public class ChatController {
     private final VcapServicesConfig vcapConfig;
     private final AgentDao agentDao;
     private final com.gp.agent.db.AuditService auditService;
+    private final SchemaIntelligenceService schemaIntelligence;
 
     // Agent cache — keyed by userId, rebuilt only when config changes.
     // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
@@ -59,12 +60,14 @@ public class ChatController {
 
     public ChatController(ChatMemoryProvider memoryProvider, ChatMemoryStore chatMemoryStore,
                           VcapServicesConfig vcapConfig, AgentDao agentDao,
+                          SchemaIntelligenceService schemaIntelligence,
                           java.util.Optional<com.gp.agent.db.AuditService> auditService) {
-        this.memoryProvider  = memoryProvider;
-        this.chatMemoryStore = chatMemoryStore;
-        this.vcapConfig      = vcapConfig;
-        this.agentDao        = agentDao;
-        this.auditService    = auditService.orElse(null);
+        this.memoryProvider     = memoryProvider;
+        this.chatMemoryStore    = chatMemoryStore;
+        this.vcapConfig         = vcapConfig;
+        this.agentDao           = agentDao;
+        this.schemaIntelligence = schemaIntelligence;
+        this.auditService       = auditService.orElse(null);
     }
 
     @PostConstruct
@@ -264,9 +267,60 @@ public class ChatController {
                         + "Use Greenplum tools for SQL queries and live data retrieval. "
                         + "Use OpenMetadata tools for asset discovery, metadata, lineage, and data quality.]");
             }
+
+            // --- Schema Intelligence (improvements 1–5) ---
+
+            // 1 & 7: New session → instruct AI to pre-load schema + comments via describe_tables
+            boolean newSession = schemaIntelligence.isNewSessionAndMark(memoryId, chatMemoryStore);
+            if (newSession) {
+                promptBuilder.append("\n\n[SESSION START — SCHEMA PRE-LOAD REQUIRED: "
+                        + "Before answering the user's question, call describe_tables for every table "
+                        + "referenced in the SCHEMA & TABLE SCOPE section of the global policy above. "
+                        + "Read ALL column comments carefully — they are the authoritative definition "
+                        + "of each column's business meaning. Do this once; the context stays active "
+                        + "for the rest of this session.]");
+            }
+
+            // 2: Business glossary — inject authoritative term→column rules for matched keywords
+            String glossaryCtx = schemaIntelligence.buildGlossaryContext(
+                    prompt, agentDao.loadGlossary());
+            if (!glossaryCtx.isEmpty()) {
+                promptBuilder.append("\n\n[BUSINESS GLOSSARY — these definitions are authoritative; "
+                        + "follow them exactly:\n").append(glossaryCtx).append("]");
+            }
+
+            // 3: Query templates — inject canonical SQL hint for best-matching template
+            String templateHint = schemaIntelligence.buildTemplateHint(
+                    prompt, agentDao.loadQueryTemplates());
+            if (!templateHint.isEmpty()) {
+                promptBuilder.append("\n\n[QUERY TEMPLATE HINT — use this SQL pattern as your starting "
+                        + "point; fill in any parameters from the user's question:\n")
+                        .append(templateHint).append("]");
+            }
+
+            // 5: Keyword-driven schema context — remind AI to call describe_tables for key tables
+            if (!newSession && !globalPrompt.isEmpty()
+                    && schemaIntelligence.containsSqlKeywords(prompt)) {
+                promptBuilder.append("\n\n[SCHEMA REMINDER: If any column name is uncertain, "
+                        + "call describe_tables to read comments before executing SQL.]");
+            }
+
             String finalPrompt = promptBuilder.toString();
 
-            String raw      = chatFn.apply(memoryId, finalPrompt);
+            // 4 & 6: Execute + self-correction loop (single retry on SQL error)
+            String raw = chatFn.apply(memoryId, finalPrompt);
+            if (schemaIntelligence.containsSqlError(raw)) {
+                log.warn("[CHAT] SQL error detected for user {}, attempting self-correction", userId);
+                String retryPrompt = "[SELF-CORRECTION: Your previous query produced an error. "
+                        + "Call describe_tables to verify exact column names, then retry the query.]\n\n"
+                        + prompt
+                        + "\n\n[USER ROLE: " + userRole + "]";
+                if (!globalPrompt.isEmpty()) {
+                    retryPrompt += "\n\n[GLOBAL POLICY INSTRUCTIONS:\n" + globalPrompt + "]";
+                }
+                raw = chatFn.apply(memoryId, retryPrompt);
+            }
+
             String response = sanitizeResponse(raw);
             log.info("[CHAT] user={} session={} length={}", userId, sessionId, response.length());
             if (auditService != null && !userEmail.isBlank()) auditService.log(userEmail, "QUERY");

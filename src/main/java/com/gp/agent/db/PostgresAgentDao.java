@@ -307,6 +307,74 @@ public class PostgresAgentDao implements AgentDao {
         log.info("[DAO] Cleared all data for user {}", userId);
     }
 
+    // --- Business glossary ---
+
+    @Override
+    public List<Map<String, String>> loadGlossary() {
+        try {
+            return jdbc.queryForList(
+                    "SELECT term, table_ref, column_ref, rule FROM business_glossary ORDER BY term")
+                    .stream()
+                    .map(row -> {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        row.forEach((k, v) -> m.put(k, v == null ? "" : v.toString()));
+                        return m;
+                    }).collect(Collectors.toList());
+        } catch (Exception e) {
+            log.warn("[DAO] Could not read glossary: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public void saveGlossaryEntry(String term, String tableRef, String columnRef, String rule) {
+        jdbc.update("""
+                INSERT INTO business_glossary(term, table_ref, column_ref, rule, created_at)
+                     VALUES (?, ?, ?, ?, NOW())
+                ON CONFLICT(term) DO UPDATE
+                   SET table_ref = EXCLUDED.table_ref,
+                       column_ref = EXCLUDED.column_ref,
+                       rule = EXCLUDED.rule
+                """, term, tableRef, columnRef, rule);
+    }
+
+    @Override
+    public void deleteGlossaryEntry(String term) {
+        jdbc.update("DELETE FROM business_glossary WHERE term = ?", term);
+    }
+
+    // --- Query templates ---
+
+    @Override
+    public List<Map<String, String>> loadQueryTemplates() {
+        try {
+            return jdbc.queryForList(
+                    "SELECT id::text AS id, name, keywords, hint_sql, description FROM query_templates ORDER BY id")
+                    .stream()
+                    .map(row -> {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        row.forEach((k, v) -> m.put(k, v == null ? "" : v.toString()));
+                        return m;
+                    }).collect(Collectors.toList());
+        } catch (Exception e) {
+            log.warn("[DAO] Could not read query templates: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public void saveQueryTemplate(String name, String keywords, String hintSql, String description) {
+        jdbc.update("""
+                INSERT INTO query_templates(name, keywords, hint_sql, description, created_at)
+                     VALUES (?, ?, ?, ?, NOW())
+                """, name, keywords, hintSql, description);
+    }
+
+    @Override
+    public void deleteQueryTemplate(int id) {
+        jdbc.update("DELETE FROM query_templates WHERE id = ?", id);
+    }
+
     // --- Helper ---
 
     private List<String> parseEmails(String text) {

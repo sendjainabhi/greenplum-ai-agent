@@ -329,6 +329,28 @@ public class FileAgentDao implements AgentDao {
         log.info("[DAO] Cleared all data for user {}", userId);
     }
 
+    // --- Business glossary (not supported in file mode — return empty) ---
+
+    @Override
+    public List<Map<String, String>> loadGlossary() { return List.of(); }
+
+    @Override
+    public void saveGlossaryEntry(String term, String tableRef, String columnRef, String rule) {}
+
+    @Override
+    public void deleteGlossaryEntry(String term) {}
+
+    // --- Query templates (not supported in file mode — return empty) ---
+
+    @Override
+    public List<Map<String, String>> loadQueryTemplates() { return List.of(); }
+
+    @Override
+    public void saveQueryTemplate(String name, String keywords, String hintSql, String description) {}
+
+    @Override
+    public void deleteQueryTemplate(int id) {}
+
     // --- Helpers ---
 
     private File dataFile(String filename) {

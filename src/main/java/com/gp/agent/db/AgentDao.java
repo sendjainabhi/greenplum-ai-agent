@@ -56,4 +56,14 @@ public interface AgentDao {
     void clearUserMemory(String userId);
     /** Wipes all per-user data (config, prefs, sessions, favourites, memory). */
     void clearUserData(String userId);
+
+    // --- Business glossary ---
+    List<Map<String, String>> loadGlossary();
+    void saveGlossaryEntry(String term, String tableRef, String columnRef, String rule);
+    void deleteGlossaryEntry(String term);
+
+    // --- Query templates ---
+    List<Map<String, String>> loadQueryTemplates();
+    void saveQueryTemplate(String name, String keywords, String hintSql, String description);
+    void deleteQueryTemplate(int id);
 }
