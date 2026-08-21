@@ -1,0 +1,19 @@
+---
+applications:
+- name: gp-cust-ai-agent
+  path: target/greenplum-ai-agent-1.0.0.jar
+  memory: 2G
+  instances: 1
+  buildpacks:
+    - java_buildpack_offline
+  env:
+    JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
+    SPRING_PROFILES_ACTIVE: cloud
+    ADMIN_PIN: tanzuadmin
+    PERMANENT_ADMIN_EMAILS: abhishek.jain@broadcom.com
+
+  services:
+    - gp-cust-authhub-sso    # Tanzu SSO / Broadcom AuthHub (p-identity plan: tanzu-authhub)
+    - gmd-ai-prod-svc         # Tanzu GenAI ai-prod model service
+    - gp-mcp-sa-svc           # Greenplum MCP server (gp-mcp-server-sa.apps.tanzu.broadcom.net)
+    - gp-cust-agent-db        # Tanzu Postgres (db-small) — fresh instance, no data from existing app
