@@ -15,13 +15,14 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 4. [MCP Capabilities](#mcp-capabilities)
 5. [Admin Panel & User Preferences](#admin-panel)
 6. [Role-Based Access Control](#role-based-access-control)
-7. [Platform Services](#platform-services)
-8. [PostgreSQL Database](#postgresql-database)
-9. [Data Retention](#data-retention)
-10. [Deployment](#deployment)
-11. [Architecture](#architecture)
-12. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
-13. [Troubleshooting](#troubleshooting)
+7. [Schema Intelligence](#schema-intelligence)
+8. [Platform Services](#platform-services)
+9. [PostgreSQL Database](#postgresql-database)
+10. [Data Retention](#data-retention)
+11. [Deployment](#deployment)
+12. [Architecture](#architecture)
+13. [Broadcom SSO Integration — Technical Deep Dive](#broadcom-sso-integration--technical-deep-dive)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -123,6 +124,26 @@ Server-side activity log for permanent admins to monitor app usage.
 - **ADMIN** is the only built-in role and grants full access — it cannot be deleted
 - Users with no assigned role default to ADMIN (backward compatible)
 - Permanent admin accounts are protected at the CF environment level — cannot be overridden from the UI
+- **Permanent admins bypass the allowlist** — `PERMANENT_ADMIN_EMAILS` entries are always granted access even when the allowlist table has entries
+
+### 🧠 Schema Intelligence
+
+Automatic query accuracy improvements applied on every chat request — no configuration required.
+
+| Improvement | When It Applies | What It Does |
+| :--- | :--- | :--- |
+| **Session schema pre-load** | First message of a new session | Injects an instruction to call `describe_tables` and map the schema before answering |
+| **Business glossary injection** | Any message matching a glossary term | Appends the authoritative term→table→column rule (e.g. "revenue → use `ear` column, not a revenue column") |
+| **Query template hints** | Message keywords match a saved template | Appends the canonical SQL pattern for the question type (e.g. top customers, renewal pipeline) |
+| **Schema reminder** | SQL-keyword messages on non-new sessions | Re-injects a brief schema reminder so context does not drift over a long conversation |
+| **SQL self-correction retry** | AI response contains an SQL error pattern | Automatically sends a self-correction follow-up with the error and a re-query instruction; one retry only |
+| **In-process session cache** | All sessions | Tracks which sessions have already received the schema pre-load to avoid redundant injections |
+
+**Business Glossary** — stored in the `business_glossary` table; seeded automatically by the V4 Flyway migration with 19 domain-specific rules extracted from the global prompt (e.g. `ear`, `tcv`, `rb`, `active`, `new logo`, `sales pod`, `fiscal year`). Matched by case-insensitive substring scan of the user's message.
+
+**Query Templates** — stored in the `query_templates` table; seeded with 7 canonical SQL patterns (top customers by EAR, active entitlement count, customer count by region/pod, renewal pipeline, top products by EAR, new logos, EAR by pod with leaders). The best-matching template is injected as a hint into the prompt.
+
+Both tables are auto-populated on first startup via Flyway and can be extended by inserting rows directly into the database. No app restart needed — templates and glossary are read fresh per request.
 
 ### 🎨 UI
 
@@ -297,11 +318,21 @@ User message
 
 ### Permanent Admins
 
-Certain accounts can be designated as permanent admins via the `PERMANENT_ADMIN_EMAILS` env var in `manifest.yml`. Their role is always `ADMIN` regardless of what is stored in `user-role-map.txt`. This protects against accidental lockout.
+Certain accounts can be designated as permanent admins via the `PERMANENT_ADMIN_EMAILS` env var in `manifest.yml`. Their role is always `ADMIN` regardless of what is stored in `user_roles`. This protects against accidental lockout.
 
 ```yaml
 env:
   PERMANENT_ADMIN_EMAILS: first.admin@your-company.com,second.admin@your-company.com
+```
+
+**Allowlist bypass:** Permanent admins are granted access even when the `allowed_users` table has entries — the allowlist check is skipped for them entirely. This means a permanent admin can always log in regardless of what the Access Control tab shows.
+
+```
+Login check order:
+  1. Is the user in PERMANENT_ADMIN_EMAILS?  → grant access (skip allowlist)
+  2. Is the user in the allowed_users table? → grant access
+  3. Is the allowed_users table empty?       → grant access (fail-open)
+  4. Otherwise                               → deny with "Access denied"
 ```
 
 > Changing permanent admins requires editing `manifest.yml` and running `mvn clean package && cf push`.
@@ -316,6 +347,76 @@ env:
 ### Admin Panel Visibility
 
 The 🔐 Admin button in the header is hidden for non-ADMIN users. It is shown only when `/api/user/current-role` returns `ADMIN` at login time.
+
+---
+
+## Schema Intelligence
+
+`SchemaIntelligenceService` is a Spring `@Service` that runs automatically on every chat request. It improves query accuracy by injecting targeted context into the AI prompt before the LLM call.
+
+### How It Integrates
+
+`ChatController` calls `SchemaIntelligenceService` between building the prompt and making the AI call:
+
+```
+User message received
+  ↓
+1. New session? → inject "SCHEMA PRE-LOAD REQUIRED" instruction
+2. Message matches glossary term? → append authoritative term→column rules
+3. Message matches template keywords? → append canonical SQL hint
+4. Non-new session + SQL keywords? → append brief schema reminder
+5. Call LLM
+6. Response contains SQL error? → send self-correction retry (once)
+```
+
+### Business Glossary
+
+Stored in the `business_glossary` table. Each row maps a business term to the exact table/column to use and a rule the AI must follow.
+
+| Column | Description |
+| :--- | :--- |
+| `term` | The term to match (case-insensitive substring of the user message) |
+| `table_ref` | Fully-qualified table name (e.g. `gmai.report_entitlements`) |
+| `column_ref` | Exact column name the AI should use |
+| `rule` | The instruction injected into the prompt when this term is matched |
+
+Seeded by V4 migration with 19 entries. To add a new mapping insert directly into the database — no restart needed:
+
+```sql
+INSERT INTO business_glossary (term, table_ref, column_ref, rule)
+VALUES ('churn', 'gmai.report_entitlements', 'end_qtr',
+        'For churn analysis filter WHERE end_qtr < current quarter AND is_current = 0.')
+ON CONFLICT (term) DO NOTHING;
+```
+
+### Query Templates
+
+Stored in the `query_templates` table. Each row holds a keyword list and a SQL pattern that is injected as a hint when the user's message matches.
+
+| Column | Description |
+| :--- | :--- |
+| `name` | Template label (display only) |
+| `keywords` | Comma-separated trigger words matched against the user message |
+| `hint_sql` | SQL pattern injected as a hint; use `{n}`, `{fy}`, `{target_quarter}` as placeholders |
+| `description` | Human-readable description of what the template does |
+
+Seeded by V4 migration with 7 templates. To add a new template:
+
+```sql
+INSERT INTO query_templates (name, keywords, hint_sql, description)
+VALUES (
+  'Churned customers',
+  'churned, lost customers, not renewing, lapsed',
+  'SELECT parent_name, SUM(ear) AS lost_ear FROM gmai.report_entitlements
+   WHERE end_qtr = ''{target_quarter}'' AND is_current = 0
+   GROUP BY parent_name ORDER BY lost_ear DESC;',
+  'Customers whose entitlements expired in a given quarter without renewal'
+);
+```
+
+### SQL Self-Correction
+
+When the AI response contains patterns such as `does not exist`, `column "`, `relation "`, `ERROR:`, or `syntax error`, `ChatController` automatically sends a single retry with the error text and an instruction to re-examine the schema and fix the query. Only one retry is attempted per request to avoid loops.
 
 ---
 
@@ -435,6 +536,8 @@ All persistent app data is stored in a Tanzu Postgres `db-small` instance (`gree
 | `user_favourites` | Per-user saved favourite prompts (JSON array) | `user_id` (PK), `data`, `updated_at` |
 | `user_memory` | Per-user, per-session LangChain4j chat memory | `user_id` + `session_id` (PK), `messages`, `updated_at` |
 | `user_audit_log` | Server-side activity log (login, logout, query events) | `id` (PK), `email`, `action`, `ts` |
+| `business_glossary` | Domain term → table/column/rule mappings used for schema intelligence | `id` (PK), `term` (UNIQUE), `table_ref`, `column_ref`, `rule` |
+| `query_templates` | Canonical SQL patterns for common business questions | `id` (PK), `name`, `keywords`, `hint_sql`, `description` |
 
 ### Data Flow
 
@@ -455,6 +558,8 @@ Every user action updates the database immediately — no restart or manual expo
 | User saves / updates sessions | `user_sessions` (upsert on `user_id`) |
 | User saves / deletes a favourite | `user_favourites` (upsert on `user_id`) |
 | User clears chat memory | `user_memory` rows deleted for that `user_id` |
+| App starts (first time) | `business_glossary` and `query_templates` seeded by V4 migration |
+| Schema intelligence processes a request | `business_glossary` and `query_templates` read fresh (no cache) |
 
 ### Storage Mode Detection
 
@@ -471,10 +576,12 @@ Every user action updates the database immediately — no restart or manual expo
 
 Migrations live in `src/main/resources/db/` and are named `V{n}__{description}.sql`.
 
-| Migration | Tables Created |
+| Migration | Tables Created / Populated |
 | :--- | :--- |
 | `V1__schema.sql` | `app_config`, `allowed_users`, `known_users`, `roles`, `user_roles`, `user_config`, `user_preferences`, `user_sessions`, `user_favourites`, `user_memory` |
 | `V2__audit_log.sql` | `user_audit_log` (with indexes on `ts` and `email`) |
+| `V3__schema_intelligence.sql` | `business_glossary`, `query_templates` |
+| `V4__seed_glossary_templates.sql` | Seeds 19 business glossary entries and 7 query templates from the global prompt rules (`ON CONFLICT DO NOTHING` — safe to re-run) |
 
 Flyway runs automatically on every startup and applies any pending migrations. Completed migrations are tracked in `flyway_schema_history`.
 
@@ -1234,6 +1341,8 @@ No additional UAA-specific libraries are required. Spring Security's standard OA
 | User preferences not applying | Postgres binding missing or app in file mode | Verify `greenplum-agent-db` is bound; check `gp.agent.storage` in startup logs |
 | "Error connecting to backend API" with a specific message | Server-side error (e.g. SQL parse failure, model timeout) | Read the error detail — it shows the exact failure returned by the server |
 | Sessions lost after restage | Expected behaviour if app was in file mode before migration | Verify data was migrated to postgres; check `user_sessions` table has rows |
+| "400 Bad Request — at least one parts field must be non-empty" from Gemini | Gemini rejects `content: null` in stored chat history (e.g. after a tool-call-only AI turn) | Fixed in `MessageSanitizer.java` — patches all `AiMessage` entries with null/blank text to `" "` before deserialization |
+| Schema intelligence glossary/templates not matching | `business_glossary` or `query_templates` tables are empty | Tables are seeded by V4 migration on first startup; verify by querying the tables directly or running `cf logs` to check for Flyway migration output |
 
 ### Logs
 
