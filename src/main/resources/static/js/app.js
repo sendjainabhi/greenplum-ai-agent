@@ -1086,7 +1086,8 @@ async function loadSessionsFromServer() {
             });
         }
     } catch (e) {
-        // Server unreachable — local state already in memory from module init
+        // Server unreachable — fall back to localStorage only if session not yet set
+        if (!currentSessionId) currentSessionId = localStorage.getItem('gp_current_session');
     }
 }
 
@@ -1145,7 +1146,7 @@ let activeRequests    = {};
 let suggestionHistory = new Set();
 let chatSessions      = safeParse('gp_sessions', []);
 if (!Array.isArray(chatSessions)) chatSessions = [];
-let currentSessionId      = localStorage.getItem('gp_current_session');
+let currentSessionId      = null; // server is authoritative; set by loadSessionsFromServer()
 let currentChatUiHistory  = [];
 let favourites            = [];
 
