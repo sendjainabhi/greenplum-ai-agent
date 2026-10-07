@@ -230,6 +230,36 @@ public class GreenplumMcpTools {
         return callMcpServer("check_table_bloat", Map.of("limit", 10, "min_bloat_percent", 20));
     }
 
+    @Tool("Returns schema information for all available database tables including column names, data types, and business descriptions. Call this once at the start of a session or when you are unsure of column names before writing SQL queries.")
+    public String describeTables() {
+        return callMcpServer("describe_tables", Map.of());
+    }
+
+    /**
+     * Fetches the schema directly from the MCP server, bypassing the LLM.
+     * Returns the plain text schema, or empty string on any failure.
+     * Used to pre-inject schema context on new sessions without LLM roundtrips.
+     */
+    public static String fetchSchemaSnapshot(String mcpUrl, String mcpAuth) {
+        if (mcpUrl == null || mcpUrl.trim().isEmpty()) return "";
+        try {
+            GreenplumMcpTools temp = new GreenplumMcpTools(mcpUrl, mcpAuth);
+            String raw = temp.describeTables();
+            if (raw == null || raw.isBlank()) return "";
+            JsonNode root = OBJECT_MAPPER.readTree(raw);
+            // Standard JSON-RPC success path: result.content[0].text
+            String text = root.path("result").path("content").path(0).path("text").asText("");
+            if (!text.isBlank()) return text.trim();
+            // If the result itself is an error, return empty so caller falls back
+            if (root.path("result").path("isError").asBoolean(false)) return "";
+            // Non-JSON or unexpected format — return raw
+            return raw.trim();
+        } catch (Exception e) {
+            log.debug("[SCHEMA-FETCH] Could not pre-fetch schema: {}", e.getMessage());
+            return "";
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Internal call — detects mode on first use, retries on session expiry
     // -------------------------------------------------------------------------

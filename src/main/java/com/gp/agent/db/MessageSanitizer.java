@@ -140,12 +140,12 @@ public class MessageSanitizer {
                     } else {
                         patched.set("toolExecutionRequests", filtered);
                     }
-                    if (needsTextPatch) patched.put("text", " ");
+                    if (needsTextPatch) patched.put("text", ".");
                     return patched;
                 }
             } else if (needsTextPatch) {
                 ObjectNode patched = node.deepCopy();
-                patched.put("text", " ");
+                patched.put("text", ".");
                 return patched;
             }
         }

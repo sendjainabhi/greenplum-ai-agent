@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Configuration
 public class AiConfig {
@@ -52,6 +53,7 @@ public class AiConfig {
 
         private static final Logger log = LoggerFactory.getLogger(FileBackedChatMemoryStore.class);
         private static final int RETENTION_DAYS = 90;
+        private final ConcurrentHashMap<Object, List<ChatMessage>> cache = new ConcurrentHashMap<>();
 
         // memoryId format: "{userId}::{sessionId}"
         private File getMemoryFile(Object memoryId) {
@@ -68,20 +70,28 @@ public class AiConfig {
 
         @Override
         public List<ChatMessage> getMessages(Object memoryId) {
+            List<ChatMessage> cached = cache.get(memoryId);
+            if (cached != null) {
+                return new ArrayList<>(cached);
+            }
             try {
                 File file = getMemoryFile(memoryId);
+                List<ChatMessage> messages = new ArrayList<>();
                 if (file.exists()) {
                     String json = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-                    return MessageSanitizer.fromJson(json);
+                    messages = MessageSanitizer.fromJson(json);
                 }
+                cache.put(memoryId, new ArrayList<>(messages));
+                return messages;
             } catch (Exception e) {
                 log.error("[MEMORY] Failed to read memory for {}: {}", memoryId, e.getMessage());
+                return new ArrayList<>();
             }
-            return new ArrayList<>();
         }
 
         @Override
         public void updateMessages(Object memoryId, List<ChatMessage> messages) {
+            cache.put(memoryId, new ArrayList<>(messages));
             try {
                 File file = getMemoryFile(memoryId);
                 String json = ChatMessageSerializer.messagesToJson(messages);
@@ -95,6 +105,7 @@ public class AiConfig {
 
         @Override
         public void deleteMessages(Object memoryId) {
+            cache.remove(memoryId);
             try {
                 File file = getMemoryFile(memoryId);
                 if (file.exists()) {

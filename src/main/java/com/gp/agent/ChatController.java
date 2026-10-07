@@ -274,15 +274,28 @@ public class ChatController {
 
             // --- Schema Intelligence (improvements 1–5) ---
 
-            // 1 & 7: New session → instruct AI to pre-load schema + comments via describe_tables
+            // 1 & 7: New session → inject schema directly so the LLM skips schema tool calls.
+            // Fall back to the old "fetch it yourself" instruction if the MCP call fails.
             boolean newSession = schemaIntelligence.isNewSessionAndMark(memoryId, chatMemoryStore);
             if (newSession) {
-                promptBuilder.append("\n\n[SESSION START — SCHEMA PRE-LOAD REQUIRED: "
-                        + "Before answering the user's question, call describe_tables for every table "
-                        + "referenced in the SCHEMA & TABLE SCOPE section of the global policy above. "
-                        + "Read ALL column comments carefully — they are the authoritative definition "
-                        + "of each column's business meaning. Do this once; the context stays active "
-                        + "for the rest of this session.]");
+                boolean hasGpMcp = !"openmetadata".equals(activeMode)
+                        && mcpUrl != null && !mcpUrl.trim().isEmpty();
+                String schemaSnapshot = hasGpMcp
+                        ? GreenplumMcpTools.fetchSchemaSnapshot(mcpUrl, mcpAuth)
+                        : "";
+                if (!schemaSnapshot.isEmpty()) {
+                    promptBuilder.append("\n\n[DATABASE SCHEMA — already loaded, do NOT call describe_tables:\n")
+                                 .append(schemaSnapshot).append("]");
+                    log.info("[CHAT] Schema pre-loaded for new session {} ({} chars)",
+                             memoryId, schemaSnapshot.length());
+                } else {
+                    promptBuilder.append("\n\n[SESSION START — SCHEMA PRE-LOAD REQUIRED: "
+                            + "Before answering the user's question, call describe_tables for every table "
+                            + "referenced in the SCHEMA & TABLE SCOPE section of the global policy above. "
+                            + "Read ALL column comments carefully — they are the authoritative definition "
+                            + "of each column's business meaning. Do this once; the context stays active "
+                            + "for the rest of this session.]");
+                }
             }
 
             // 2: Business glossary — inject authoritative term→column rules for matched keywords
@@ -985,22 +998,22 @@ public class ChatController {
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
                         .timeout(timeout).maxRetries(1).listeners(listeners);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) b.baseUrl(baseUrl);
-                return b.build();
+                return new SanitizingChatModel(b.build());
             }
             case "anthropic": {
                 var b = AnthropicChatModel.builder()
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
                         .timeout(timeout).maxRetries(1).listeners(listeners);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) b.baseUrl(baseUrl);
-                return b.build();
+                return new SanitizingChatModel(b.build());
             }
             default: { // ollama
                 String url = (baseUrl != null && !baseUrl.trim().isEmpty())
                         ? baseUrl : "http://localhost:11434";
-                return OllamaChatModel.builder()
+                return new SanitizingChatModel(OllamaChatModel.builder()
                         .baseUrl(url).modelName(modelName).temperature(0.0)
                         .timeout(timeout).maxRetries(1).listeners(listeners)
-                        .build();
+                        .build());
             }
         }
     }

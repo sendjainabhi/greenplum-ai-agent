@@ -9,16 +9,24 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * LangChain4j ChatMemoryStore backed by the user_memory table.
  * memoryId format: "{userId}::{sessionId}" (same as FileBackedChatMemoryStore).
+ *
+ * In-memory cache: MessageWindowChatMemory.add() calls store.getMessages() before
+ * every write to rebuild its list. Without a cache the sanitizer would run on every
+ * tool-call loop iteration, stripping tool requests whose results haven't been written
+ * yet — producing an infinite re-execution loop. The cache ensures the sanitizer runs
+ * exactly once (on first DB load); subsequent reads return the already-clean list.
  */
 public class PostgresChatMemoryStore implements ChatMemoryStore {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresChatMemoryStore.class);
 
     private final JdbcTemplate jdbc;
+    private final ConcurrentHashMap<Object, List<ChatMessage>> cache = new ConcurrentHashMap<>();
 
     public PostgresChatMemoryStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -26,6 +34,11 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
 
     @Override
     public List<ChatMessage> getMessages(Object memoryId) {
+        List<ChatMessage> cached = cache.get(memoryId);
+        if (cached != null) {
+            return new ArrayList<>(cached);
+        }
+        // First load: read from DB, sanitize once, populate cache
         try {
             String[] parts   = memoryId.toString().split("::", 2);
             String userId    = parts[0];
@@ -33,8 +46,11 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
             List<String> rows = jdbc.queryForList(
                     "SELECT messages FROM user_memory WHERE user_id = ? AND session_id = ?",
                     String.class, userId, sessionId);
-            if (rows.isEmpty()) return new ArrayList<>();
-            return MessageSanitizer.fromJson(rows.get(0));
+            List<ChatMessage> messages = rows.isEmpty()
+                    ? new ArrayList<>()
+                    : MessageSanitizer.fromJson(rows.get(0));
+            cache.put(memoryId, new ArrayList<>(messages));
+            return messages;
         } catch (Exception e) {
             log.error("[MEMORY] Failed to read messages for {}: {}", memoryId, e.getMessage());
             return new ArrayList<>();
@@ -43,6 +59,7 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
 
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
+        cache.put(memoryId, new ArrayList<>(messages));
         try {
             String[] parts   = memoryId.toString().split("::", 2);
             String userId    = parts[0];
@@ -61,6 +78,7 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
 
     @Override
     public void deleteMessages(Object memoryId) {
+        cache.remove(memoryId);
         try {
             String[] parts   = memoryId.toString().split("::", 2);
             String userId    = parts[0];
