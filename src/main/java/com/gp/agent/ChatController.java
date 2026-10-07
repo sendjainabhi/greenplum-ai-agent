@@ -5,6 +5,7 @@ import com.gp.agent.db.AgentDao;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.ollama.OllamaChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
@@ -43,6 +44,7 @@ public class ChatController {
     private final AgentDao agentDao;
     private final com.gp.agent.db.AuditService auditService;
     private final SchemaIntelligenceService schemaIntelligence;
+    private final com.gp.agent.db.ModelUsageListener usageListener;
 
     // Agent cache — keyed by userId, rebuilt only when config changes.
     // Stores a BiFunction<memoryId, prompt, response> so either GreenplumAgent or
@@ -61,13 +63,15 @@ public class ChatController {
     public ChatController(ChatMemoryProvider memoryProvider, ChatMemoryStore chatMemoryStore,
                           VcapServicesConfig vcapConfig, AgentDao agentDao,
                           SchemaIntelligenceService schemaIntelligence,
-                          java.util.Optional<com.gp.agent.db.AuditService> auditService) {
+                          java.util.Optional<com.gp.agent.db.AuditService> auditService,
+                          java.util.Optional<com.gp.agent.db.ModelUsageListener> usageListener) {
         this.memoryProvider     = memoryProvider;
         this.chatMemoryStore    = chatMemoryStore;
         this.vcapConfig         = vcapConfig;
         this.agentDao           = agentDao;
         this.schemaIntelligence = schemaIntelligence;
         this.auditService       = auditService.orElse(null);
+        this.usageListener      = usageListener.orElse(null);
     }
 
     @PostConstruct
@@ -973,18 +977,20 @@ public class ChatController {
     private ChatLanguageModel buildModel(String provider, String modelName,
                                           String apiKey, String baseUrl, int timeoutSeconds) {
         Duration timeout = Duration.ofSeconds(timeoutSeconds);
+        List<ChatModelListener> listeners = usageListener != null
+                ? List.of(usageListener) : List.of();
         switch (provider) {
             case "openai": {
                 var b = OpenAiChatModel.builder()
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1);
+                        .timeout(timeout).maxRetries(1).listeners(listeners);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) b.baseUrl(baseUrl);
                 return b.build();
             }
             case "anthropic": {
                 var b = AnthropicChatModel.builder()
                         .apiKey(apiKey).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1);
+                        .timeout(timeout).maxRetries(1).listeners(listeners);
                 if (baseUrl != null && !baseUrl.trim().isEmpty()) b.baseUrl(baseUrl);
                 return b.build();
             }
@@ -993,7 +999,7 @@ public class ChatController {
                         ? baseUrl : "http://localhost:11434";
                 return OllamaChatModel.builder()
                         .baseUrl(url).modelName(modelName).temperature(0.0)
-                        .timeout(timeout).maxRetries(1)
+                        .timeout(timeout).maxRetries(1).listeners(listeners)
                         .build();
             }
         }

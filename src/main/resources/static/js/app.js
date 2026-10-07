@@ -125,7 +125,7 @@ function closeAdminModal() {
 }
 
 function switchAdminTab(tab) {
-    ['Prompt', 'Access', 'Roles', 'Audit'].forEach(t => {
+    ['Prompt', 'Access', 'Roles', 'Audit', 'Usage'].forEach(t => {
         const panel = document.getElementById('adminPanel' + t);
         const btn   = document.getElementById('adminTab'   + t);
         if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -141,6 +141,14 @@ function switchAdminTab(tab) {
         loadRolesTab();
     } else if (tab === 'Audit') {
         loadAuditLog(0);
+        loadActiveUsers();
+    } else if (tab === 'Usage') {
+        loadUsageTab();
+    }
+    // Always clear previous interval, restart only when on Audit tab
+    if (_activeUsersTimer) { clearInterval(_activeUsersTimer); _activeUsersTimer = null; }
+    if (tab === 'Audit') {
+        _activeUsersTimer = setInterval(loadActiveUsers, 60_000);
     }
 }
 
@@ -153,15 +161,16 @@ let auditSortCol     = 'ts';
 let auditSortDir     = 'desc';
 
 const AUDIT_ACTION_STYLE = {
-    LOGIN:  'background:#dbeafe;color:#1d4ed8;',
-    LOGOUT: 'background:#fef3c7;color:#92400e;',
-    QUERY:  'background:#f0fdf4;color:#16a34a;'
+    LOGIN:  'background:#1d4ed8;color:#fff;',
+    LOGOUT: 'background:#b45309;color:#fff;',
+    QUERY:  'background:#059669;color:#fff;'
 };
 
 async function loadAuditLog(page) {
     auditCurrentPage = page;
-    const from = (document.getElementById('auditFrom') || {}).value || '';
-    const to   = (document.getElementById('auditTo')   || {}).value || '';
+    const from  = (document.getElementById('auditFrom')  || {}).value || '';
+    const to    = (document.getElementById('auditTo')    || {}).value || '';
+    const email = (document.getElementById('auditEmail') || {}).value || '';
     const tbody    = document.getElementById('auditTableBody');
     const pageInfo = document.getElementById('auditPageInfo');
     const prevBtn  = document.getElementById('auditPrevBtn');
@@ -171,8 +180,9 @@ async function loadAuditLog(page) {
 
     try {
         const params = new URLSearchParams({ page, size: 50 });
-        if (from) params.append('from', from);
-        if (to)   params.append('to',   to);
+        if (from)  params.append('from',  from);
+        if (to)    params.append('to',    to);
+        if (email) params.append('email', email);
         const res  = await fetch('/api/admin/audit?' + params);
         if (res.status === 403) {
             if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="padding:16px;text-align:center;color:#ef4444;">Access denied — permanent admins only</td></tr>';
@@ -248,11 +258,241 @@ function auditChangePage(delta) {
     loadAuditLog(auditCurrentPage + delta);
 }
 
+let _activeUsersTimer = null;
+
+async function loadActiveUsers() {
+    const minutesSel = document.getElementById('activeUsersWindow');
+    const minutes    = minutesSel ? minutesSel.value : 30;
+    const badge      = document.getElementById('activeUsersBadge');
+    const list       = document.getElementById('activeUsersList');
+    if (!list) return;
+
+    try {
+        const res  = await fetch('/api/admin/active-users?minutes=' + minutes);
+        if (!res.ok) { if (list) list.textContent = 'Access denied'; return; }
+        const data = await res.json();
+        const users = data.users || [];
+
+        if (badge) {
+            badge.textContent = users.length;
+            badge.style.background = users.length > 0 ? '#dcfce7' : '#f1f5f9';
+            badge.style.color      = users.length > 0 ? '#16a34a' : '#64748b';
+        }
+
+        if (users.length === 0) {
+            list.innerHTML = '<span style="color:var(--muted-text);">No active users in this window</span>';
+        } else {
+            list.innerHTML = users.map(u => {
+                const ago        = u.last_seen ? timeSince(new Date(u.last_seen)) : '—';
+                const queries    = u.query_count || 0;
+                const lastAction = u.last_action || '';
+                const dotColor   = queries > 0 ? '#22c55e' : '#f59e0b'; // green = querying, amber = logged in only
+                const label      = queries > 0 ? `${queries} quer${queries === 1 ? 'y' : 'ies'}` : 'logged in';
+                return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-subtle);">
+                    <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;"></span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.email || ''}</span>
+                    <span style="color:var(--muted-text);white-space:nowrap;font-size:0.9em;">${label} · ${ago}</span>
+                </div>`;
+            }).join('');
+        }
+    } catch (e) {
+        if (list) list.textContent = 'Error loading active users';
+    }
+}
+
+function timeSince(date) {
+    const sec = Math.floor((Date.now() - date) / 1000);
+    if (sec < 60)  return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+    return Math.floor(sec / 3600) + 'h ago';
+}
+
+// =============================================================================
+// MODEL USAGE TAB
+// =============================================================================
+let _usageChartTokens = null;
+let _usageChartCalls  = null;
+
+async function loadUsageTab() {
+    const daysSel  = document.getElementById('usageDays');
+    const days     = daysSel ? daysSel.value : 7;
+    const bodyEl   = document.getElementById('usageTableBody');
+    const noData   = document.getElementById('usageNoData');
+    const daysLbl  = document.getElementById('usageDaysLabel');
+    if (!bodyEl) return;
+    if (daysLbl) daysLbl.textContent = days;
+    bodyEl.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#6366f1;">Loading…</td></tr>';
+    if (noData) noData.style.display = 'none';
+
+    // Destroy old charts while data loads
+    if (_usageChartTokens) { _usageChartTokens.destroy(); _usageChartTokens = null; }
+    if (_usageChartCalls)  { _usageChartCalls.destroy();  _usageChartCalls  = null; }
+
+    try {
+        const res  = await fetch('/api/admin/usage?days=' + days);
+        if (!res.ok) {
+            bodyEl.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#dc2626;">Access denied</td></tr>';
+            return;
+        }
+        const data  = await res.json();
+        const daily = data.daily || [];
+
+        if (daily.length === 0) {
+            if (noData) noData.style.display = '';
+            bodyEl.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#6366f1;">No data for selected period.</td></tr>';
+            return;
+        }
+
+        // Aggregate by day (sum across all models — single-model case this is a no-op)
+        const byDay = {};
+        daily.forEach(r => {
+            const d = (r.day || '').toString().substring(0, 10);
+            if (!byDay[d]) byDay[d] = { input: 0, output: 0, calls: 0 };
+            byDay[d].input  += Number(r.input_tokens  || 0);
+            byDay[d].output += Number(r.output_tokens || 0);
+            byDay[d].calls  += Number(r.call_count    || 0);
+        });
+        const days_sorted = Object.keys(byDay).sort();
+
+        _buildTokenChart(days_sorted, byDay);
+        _buildCallsChart(days_sorted, byDay);
+
+        // Table — full detail rows
+        bodyEl.innerHTML = daily.map(r => {
+            const day    = (r.day || '').toString().substring(0, 10);
+            const model  = r.model_name || '—';
+            const calls  = Number(r.call_count    || 0).toLocaleString();
+            const input  = Number(r.input_tokens  || 0).toLocaleString();
+            const output = Number(r.output_tokens || 0).toLocaleString();
+            const total  = Number(r.total_tokens  || 0).toLocaleString();
+            return `<tr style="border-bottom:1px solid #e0e7ff;">
+                <td style="padding:7px 10px; white-space:nowrap; color:#1e293b;">${day}</td>
+                <td style="padding:7px 10px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#1e293b;" title="${model}">${model}</td>
+                <td style="padding:7px 10px; text-align:right; color:#1e293b;">${calls}</td>
+                <td style="padding:7px 10px; text-align:right; color:#3b82f6;">${input}</td>
+                <td style="padding:7px 10px; text-align:right; color:#8b5cf6;">${output}</td>
+                <td style="padding:7px 10px; text-align:right; font-weight:600; color:#4338ca;">${total}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        bodyEl.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#dc2626;">Error loading usage data</td></tr>';
+    }
+}
+
+function _buildTokenChart(days, byDay) {
+    const canvas = document.getElementById('usageChartTokens');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    _usageChartTokens = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: days,
+            datasets: [
+                {
+                    label: 'Input tokens',
+                    data: days.map(d => byDay[d].input),
+                    backgroundColor: '#3b82f6cc',
+                    hoverBackgroundColor: '#3b82f6',
+                    borderRadius: 4,
+                    borderSkipped: false,
+                },
+                {
+                    label: 'Output tokens',
+                    data: days.map(d => byDay[d].output),
+                    backgroundColor: '#8b5cf6cc',
+                    hoverBackgroundColor: '#8b5cf6',
+                    borderRadius: 4,
+                    borderSkipped: false,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 10, padding: 8, color: '#4338ca' } },
+                tooltip: {
+                    backgroundColor: '#1e1b4b',
+                    titleColor: '#a5b4fc',
+                    bodyColor: '#e0e7ff',
+                    callbacks: {
+                        label: ctx => {
+                            const v = ctx.parsed.y;
+                            return ` ${ctx.dataset.label}: ${v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toLocaleString()}`;
+                        },
+                        footer: items => {
+                            const sum = items.reduce((a, b) => a + b.parsed.y, 0);
+                            return `Total: ${sum >= 1000 ? (sum/1000).toFixed(1)+'k' : sum.toLocaleString()} tokens`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { stacked: true, ticks: { font: { size: 9 }, maxRotation: 40, color: '#818cf8' }, grid: { display: false } },
+                y: { stacked: true,
+                     ticks: { font: { size: 9 }, color: '#818cf8', callback: v => v >= 1000 ? (v/1000).toFixed(0)+'k' : v },
+                     grid: { color: 'rgba(99,102,241,0.08)' } }
+            }
+        }
+    });
+}
+
+function _buildCallsChart(days, byDay) {
+    const canvas = document.getElementById('usageChartCalls');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    _usageChartCalls = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: days,
+            datasets: [{
+                label: 'Calls',
+                data: days.map(d => byDay[d].calls),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16,185,129,0.12)',
+                pointBackgroundColor: '#10b981',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                borderWidth: 2.5,
+                fill: true,
+                tension: 0.35,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#022c22',
+                    titleColor: '#6ee7b7',
+                    bodyColor: '#d1fae5',
+                    callbacks: {
+                        label: ctx => ` ${ctx.parsed.y} LLM call${ctx.parsed.y !== 1 ? 's' : ''}`
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { font: { size: 9 }, maxRotation: 40, color: '#34d399' }, grid: { display: false } },
+                y: { beginAtZero: true,
+                     ticks: { font: { size: 9 }, color: '#34d399', precision: 0 },
+                     grid: { color: 'rgba(16,185,129,0.08)' } }
+            }
+        }
+    });
+}
+
 function resetAuditFilter() {
     const f = document.getElementById('auditFrom');
     const t = document.getElementById('auditTo');
+    const e = document.getElementById('auditEmail');
     if (f) f.value = '';
     if (t) t.value = '';
+    if (e) e.value = '';
     auditSortCol = 'ts';
     auditSortDir = 'desc';
     loadAuditLog(0);
@@ -374,9 +614,11 @@ async function verifyAdminPin() {
         document.getElementById('adminSaveResult').style.display = 'none';
         document.getElementById('adminAuthSection').style.display = 'none';
         document.getElementById('adminEditorSection').style.display = 'block';
-        // Show Audit tab only for permanent admins
+        // Show Audit and Usage tabs only for permanent admins
         const auditTabBtn = document.getElementById('adminTabAudit');
         if (auditTabBtn) auditTabBtn.style.display = IS_PERMANENT_ADMIN ? '' : 'none';
+        const usageTabBtn = document.getElementById('adminTabUsage');
+        if (usageTabBtn) usageTabBtn.style.display = IS_PERMANENT_ADMIN ? '' : 'none';
         // Start on Prompt tab; load allowlist + roles in background
         switchAdminTab('Prompt');
         loadAllowlist();

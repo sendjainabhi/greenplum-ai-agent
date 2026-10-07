@@ -193,6 +193,10 @@
                         style="display:none; background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
                     Audit Log
                 </button>
+                <button id="adminTabUsage" onclick="switchAdminTab('Usage')"
+                        style="display:none; background:none; border:none; border-bottom:2px solid transparent; color:var(--muted-text); font-weight:normal; padding:7px 16px; cursor:pointer; font-size:0.88em; margin-bottom:-2px; transition:all 0.15s;">
+                    Usage
+                </button>
             </div>
 
             <!-- Panel: Global Prompt -->
@@ -276,9 +280,29 @@
             <div id="adminPanelAudit" style="display:none;">
                 <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
                     Server-side events only: <strong>LOGIN</strong>, <strong>LOGOUT</strong>, <strong>QUERY</strong>.
-                    Records older than 14 days are purged automatically.
+                    Records older than 30 days are purged automatically.
                 </p>
-                <!-- Date filter -->
+                <!-- Active Users -->
+                <div style="margin-bottom:14px; padding:10px 12px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--sidebar-bg);">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <span style="font-size:0.85em; font-weight:600; color:var(--text-color);">
+                            Active Users <span id="activeUsersBadge" style="margin-left:6px; padding:1px 8px; border-radius:10px; font-size:0.8em; background:#dcfce7; color:#16a34a;">0</span>
+                        </span>
+                        <span style="display:flex; align-items:center; gap:6px;">
+                            <label style="font-size:0.78em; color:var(--muted-text);">Window</label>
+                            <select id="activeUsersWindow" onchange="loadActiveUsers()"
+                                    style="padding:2px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.78em; background:var(--surface-bg,#fff); color:var(--text-color);">
+                                <option value="15">15 min</option>
+                                <option value="30" selected>30 min</option>
+                                <option value="60">1 hour</option>
+                                <option value="240">4 hours</option>
+                            </select>
+                            <button class="btn-cancel" onclick="loadActiveUsers()" style="padding:2px 8px; font-size:0.78em;">Refresh</button>
+                        </span>
+                    </div>
+                    <div id="activeUsersList" style="font-size:0.82em; color:var(--muted-text);">Loading…</div>
+                </div>
+                <!-- Filters -->
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
                     <label style="font-size:0.85em; color:var(--muted-text); white-space:nowrap;">From</label>
                     <input type="date" id="auditFrom"
@@ -286,6 +310,9 @@
                     <label style="font-size:0.85em; color:var(--muted-text); white-space:nowrap;">To</label>
                     <input type="date" id="auditTo"
                            style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.85em; background:var(--surface-bg,#fff); color:var(--text-color,#111);">
+                    <input type="text" id="auditEmail" placeholder="Search by email..."
+                           style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.85em; background:var(--surface-bg,#fff); color:var(--text-color,#111); min-width:180px;"
+                           onkeydown="if(event.key==='Enter') loadAuditLog(0);">
                     <button class="btn-save" onclick="loadAuditLog(0)" style="padding:5px 14px; font-size:0.85em;">Apply</button>
                     <button class="btn-cancel" onclick="resetAuditFilter()" style="padding:5px 10px; font-size:0.85em;">Reset</button>
                 </div>
@@ -309,6 +336,78 @@
                     <button class="btn-cancel" id="auditPrevBtn" onclick="auditChangePage(-1)" style="padding:4px 12px;" disabled>&#8592; Prev</button>
                     <span id="auditPageInfo" style="color:var(--muted-text);">—</span>
                     <button class="btn-cancel" id="auditNextBtn" onclick="auditChangePage(1)"  style="padding:4px 12px;" disabled>Next &#8594;</button>
+                </div>
+            </div>
+
+            <!-- Panel: Model Usage (permanent admins only) -->
+            <div id="adminPanelUsage" style="display:none;">
+
+                <!-- Styled analytics card -->
+                <div style="background:linear-gradient(150deg,#eef2ff 0%,#f5f3ff 60%,#ecfdf5 100%); border:1px solid #c7d2fe; border-radius:14px; padding:16px 18px 12px;">
+
+                    <!-- Header row -->
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.95em; color:#3730a3; letter-spacing:-0.01em;">Model Usage Analytics</div>
+                            <div style="font-size:0.77em; color:#6366f1; margin-top:2px;">Token consumption &amp; call volume · last <span id="usageDaysLabel">7</span> days · max 60 days retained</div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <select id="usageDays" onchange="loadUsageTab()" style="font-size:0.82em; padding:4px 10px; border-radius:8px; border:1px solid #a5b4fc; background:#fff; color:#3730a3; cursor:pointer;">
+                                <option value="7"  selected>Last 7 days</option>
+                                <option value="14">Last 14 days</option>
+                                <option value="30">Last 30 days</option>
+                                <option value="60">Last 60 days</option>
+                            </select>
+                            <button onclick="loadUsageTab()" style="padding:4px 14px; font-size:0.82em; border-radius:8px; border:1px solid #a5b4fc; background:#6366f1; color:#fff; cursor:pointer;">Refresh</button>
+                        </div>
+                    </div>
+
+                    <span id="usageNoData" style="display:none; font-size:0.83em; color:#6366f1;">No usage data yet — tracking starts once a user sends a message.</span>
+
+                    <!-- Two charts side by side -->
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+
+                        <!-- Token chart card -->
+                        <div style="background:#fff; border-radius:10px; padding:14px 14px 10px; box-shadow:0 2px 8px rgba(99,102,241,0.10);">
+                            <div style="font-size:0.78em; font-weight:700; color:#4338ca; margin-bottom:2px;">Token Usage</div>
+                            <div style="font-size:0.72em; color:#818cf8; margin-bottom:10px;">Input (blue) &amp; Output (violet) tokens per day</div>
+                            <div style="position:relative; height:180px;">
+                                <canvas id="usageChartTokens"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Calls chart card -->
+                        <div style="background:#fff; border-radius:10px; padding:14px 14px 10px; box-shadow:0 2px 8px rgba(16,185,129,0.10);">
+                            <div style="font-size:0.78em; font-weight:700; color:#065f46; margin-bottom:2px;">Daily Calls</div>
+                            <div style="font-size:0.72em; color:#34d399; margin-bottom:10px;">Number of LLM calls made per day</div>
+                            <div style="position:relative; height:180px;">
+                                <canvas id="usageChartCalls"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p style="font-size:0.72em; color:#818cf8; text-align:center; margin:10px 0 0;">
+                        Hover bars for exact values &nbsp;·&nbsp; Hover line points for call count
+                    </p>
+                </div>
+
+                <!-- Raw data table -->
+                <div style="overflow-x:auto; max-height:180px; overflow-y:auto; margin-top:12px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.83em;">
+                        <thead style="position:sticky; top:0; z-index:1;">
+                            <tr style="background:#eef2ff;">
+                                <th style="padding:7px 10px; text-align:left; font-weight:600; border-bottom:1px solid #c7d2fe; white-space:nowrap; color:#3730a3;">Date</th>
+                                <th style="padding:7px 10px; text-align:left; font-weight:600; border-bottom:1px solid #c7d2fe; color:#3730a3;">Model</th>
+                                <th style="padding:7px 10px; text-align:right; font-weight:600; border-bottom:1px solid #c7d2fe; color:#3730a3;">Calls</th>
+                                <th style="padding:7px 10px; text-align:right; font-weight:600; border-bottom:1px solid #c7d2fe; color:#3730a3;">Input tokens</th>
+                                <th style="padding:7px 10px; text-align:right; font-weight:600; border-bottom:1px solid #c7d2fe; color:#3730a3;">Output tokens</th>
+                                <th style="padding:7px 10px; text-align:right; font-weight:600; border-bottom:1px solid #c7d2fe; color:#3730a3;">Total tokens</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usageTableBody">
+                            <tr><td colspan="6" style="padding:16px; text-align:center; color:#6366f1;">Loading…</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 

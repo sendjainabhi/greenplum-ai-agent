@@ -7,6 +7,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -24,6 +25,7 @@ public class AuditController {
     ResponseEntity<Map<String, Object>> getAuditLog(
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
+            @RequestParam(required = false) String email,
             @RequestParam(defaultValue = "0") int page,
             Authentication authentication) {
 
@@ -34,7 +36,35 @@ public class AuditController {
             return ResponseEntity.ok(Map.of("rows", java.util.List.of(), "total", 0,
                     "page", 0, "pageSize", 50, "totalPages", 1));
         }
-        return ResponseEntity.ok(auditService.getAuditPage(from, to, Math.max(0, page)));
+        return ResponseEntity.ok(auditService.getAuditPage(from, to, email, Math.max(0, page)));
+    }
+
+    @GetMapping("/active-users")
+    ResponseEntity<?> getActiveUsers(
+            @RequestParam(defaultValue = "30") int minutes,
+            Authentication authentication) {
+
+        if (!isPermanentAdmin(resolveEmail(authentication))) {
+            return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
+        }
+        int window = Math.min(Math.max(minutes, 1), 1440); // clamp 1 min – 24 h
+        return ResponseEntity.ok(Map.of(
+                "users",   auditService == null ? java.util.List.of() : auditService.getActiveUsers(window),
+                "minutes", window));
+    }
+
+    @GetMapping("/usage")
+    ResponseEntity<?> getUsage(
+            @RequestParam(defaultValue = "7") int days,
+            Authentication authentication) {
+
+        if (!isPermanentAdmin(resolveEmail(authentication))) {
+            return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
+        }
+        int window = Math.min(Math.max(days, 1), 90);
+        List<Map<String, Object>> summary = auditService == null ? List.of() : auditService.getUsageSummary();
+        List<Map<String, Object>> daily   = auditService == null ? List.of() : auditService.getDailyUsage(window);
+        return ResponseEntity.ok(Map.of("summary", summary, "daily", daily, "days", window));
     }
 
     private String resolveEmail(Authentication authentication) {
