@@ -52,9 +52,15 @@ public class ChatController {
     private final ConcurrentHashMap<String, java.util.function.BiFunction<String, String, String>> agentCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> configHashCache = new ConcurrentHashMap<>();
 
+    // Schema snapshot cache — fetched from MCP once per startup, then served from memory.
+    // Schema is injected into every prompt but stripped from stored history by the memory store,
+    // so it never accumulates across turns. Key: mcpUrl + "|" + mcpAuth.
+    private final ConcurrentHashMap<String, String> schemaSnapshotCache = new ConcurrentHashMap<>();
+
     // Admin PIN — set via admin.pin in application.yml (overridable via ADMIN_PIN env var)
     @Value("${admin.pin}")
     private String adminPinRaw;
+
     private String adminPinHash; // SHA-256 of adminPinRaw, computed at startup
 
     // No in-memory cache for global prompt — always read from disk so updates
@@ -274,27 +280,25 @@ public class ChatController {
 
             // --- Schema Intelligence (improvements 1–5) ---
 
-            // 1 & 7: New session → inject schema directly so the LLM skips schema tool calls.
-            // Fall back to the old "fetch it yourself" instruction if the MCP call fails.
-            boolean newSession = schemaIntelligence.isNewSessionAndMark(memoryId, chatMemoryStore);
-            if (newSession) {
-                boolean hasGpMcp = !"openmetadata".equals(activeMode)
-                        && mcpUrl != null && !mcpUrl.trim().isEmpty();
-                String schemaSnapshot = hasGpMcp
-                        ? GreenplumMcpTools.fetchSchemaSnapshot(mcpUrl, mcpAuth)
-                        : "";
+            // 1 & 7: Always inject schema from cache so the LLM never calls describe_tables.
+            // The memory store strips the schema block before persisting, so it never accumulates
+            // in conversation history — each turn gets exactly one fresh injection in the prompt.
+            schemaIntelligence.isNewSessionAndMark(memoryId, chatMemoryStore);
+            boolean hasGpMcp = !"openmetadata".equals(activeMode)
+                    && mcpUrl != null && !mcpUrl.trim().isEmpty();
+            if (hasGpMcp) {
+                String cacheKey = mcpUrl + "|" + mcpAuth;
+                String schemaSnapshot = schemaSnapshotCache.get(cacheKey);
+                if (schemaSnapshot == null) {
+                    schemaSnapshot = GreenplumMcpTools.fetchSchemaSnapshot(mcpUrl, mcpAuth);
+                    if (!schemaSnapshot.isEmpty()) {
+                        schemaSnapshotCache.put(cacheKey, schemaSnapshot);
+                        log.info("[CHAT] Schema snapshot cached ({} chars)", schemaSnapshot.length());
+                    }
+                }
                 if (!schemaSnapshot.isEmpty()) {
                     promptBuilder.append("\n\n[DATABASE SCHEMA — already loaded, do NOT call describe_tables:\n")
                                  .append(schemaSnapshot).append("]");
-                    log.info("[CHAT] Schema pre-loaded for new session {} ({} chars)",
-                             memoryId, schemaSnapshot.length());
-                } else {
-                    promptBuilder.append("\n\n[SESSION START — SCHEMA PRE-LOAD REQUIRED: "
-                            + "Before answering the user's question, call describe_tables for every table "
-                            + "referenced in the SCHEMA & TABLE SCOPE section of the global policy above. "
-                            + "Read ALL column comments carefully — they are the authoritative definition "
-                            + "of each column's business meaning. Do this once; the context stays active "
-                            + "for the rest of this session.]");
                 }
             }
 
@@ -313,13 +317,6 @@ public class ChatController {
                 promptBuilder.append("\n\n[QUERY TEMPLATE HINT — use this SQL pattern as your starting "
                         + "point; fill in any parameters from the user's question:\n")
                         .append(templateHint).append("]");
-            }
-
-            // 5: Keyword-driven schema context — remind AI to call describe_tables for key tables
-            if (!newSession && !globalPrompt.isEmpty()
-                    && schemaIntelligence.containsSqlKeywords(prompt)) {
-                promptBuilder.append("\n\n[SCHEMA REMINDER: If any column name is uncertain, "
-                        + "call describe_tables to read comments before executing SQL.]");
             }
 
             String finalPrompt = promptBuilder.toString();

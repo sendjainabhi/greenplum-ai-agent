@@ -1,0 +1,21 @@
+{
+  "properties": [
+    {
+      "name": "gp.agent.storage",
+      "type": "java.lang.String",
+      "description": "Backing store for chat memory. Accepted values: postgres, file (default)."
+    },
+    {
+      "name": "gp.agent.memory.max-messages",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of messages kept per session window (MessageWindowChatMemory). Tool-call intermediates are compacted before this limit is applied. Default: 20.",
+      "defaultValue": 20
+    },
+    {
+      "name": "gp.agent.memory.max-output-tokens",
+      "type": "java.lang.Integer",
+      "description": "Maximum tokens the model may produce in a single response (maps to maxTokens on OpenAI/Anthropic, numPredict on Ollama). Default: 4096.",
+      "defaultValue": 4096
+    }
+  ]
+}

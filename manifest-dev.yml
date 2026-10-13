@@ -1,0 +1,19 @@
+---
+applications:
+- name: greenplum-ai-agent-dev
+  path: target/greenplum-ai-agent-1.0.0.jar
+  memory: 2G
+  instances: 1
+  buildpacks:
+    - java_buildpack_offline
+  env:
+    JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
+    SPRING_PROFILES_ACTIVE: cloud
+    ADMIN_PIN: tanzuadmin
+    PERMANENT_ADMIN_EMAILS: mike.willis@broadcom.com,abhishek.jain@broadcom.com
+
+  services:
+    - gmd-authhub-sso        # Same SSO as prod
+    - ai-gmd-paid-svc        # Same AI model service as prod
+    - gp-mcp-greenplum       # Same Greenplum MCP server as prod
+    - greenplum-agent-db     # Same Postgres DB as prod

@@ -1,5 +1,6 @@
 package com.gp.agent.db;
 
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
@@ -59,19 +60,28 @@ public class PostgresChatMemoryStore implements ChatMemoryStore {
 
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
-        cache.put(memoryId, new ArrayList<>(messages));
+        List<ChatMessage> toStore = MessageSanitizer.stripSchemaAtTurnEnd(messages);
+        cache.put(memoryId, new ArrayList<>(toStore));
         try {
             String[] parts   = memoryId.toString().split("::", 2);
             String userId    = parts[0];
             String sessionId = parts.length > 1 ? parts[1] : parts[0];
-            String json = ChatMessageSerializer.messagesToJson(messages);
+            String json = ChatMessageSerializer.messagesToJson(toStore);
             jdbc.update("""
                     INSERT INTO user_memory(user_id, session_id, messages, updated_at) VALUES (?, ?, ?, NOW())
                     ON CONFLICT(user_id, session_id) DO UPDATE
                         SET messages = EXCLUDED.messages, updated_at = NOW()
                     """, userId, sessionId, json);
-            log.info("[MEMORY] Saved {} messages for {}::{}", messages.size(), userId, sessionId);
+            log.info("[MEMORY] Saved {} messages for {}::{}", toStore.size(), userId, sessionId);
+            // Invalidate cache after a complete turn so the next turn always reads fresh from DB.
+            // Within a turn the cache stays active — it prevents the sanitizer loop during
+            // tool-call iterations. Between turns DB is the source of truth.
+            ChatMessage last = toStore.isEmpty() ? null : toStore.get(toStore.size() - 1);
+            if (last instanceof AiMessage ai && !ai.hasToolExecutionRequests()) {
+                cache.remove(memoryId);
+            }
         } catch (Exception e) {
+            cache.remove(memoryId); // drop stale cache so next read falls back to DB
             log.error("[MEMORY] Failed to save messages for {}: {}", memoryId, e.getMessage());
         }
     }

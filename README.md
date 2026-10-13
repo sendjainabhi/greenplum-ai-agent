@@ -62,6 +62,7 @@ A Cloud Foundry-native AI assistant for the Tanzu data platform. Authenticate vi
 - **Session rename / delete** — inline from the sidebar
 - **Cancel** — stop the AI response mid-generation
 - **Prompt autocomplete** — suggestions from your prompt history as you type
+- **Smart conversation memory** — only the final answer from each turn is kept in long-term history; raw tool outputs (SQL results) are automatically discarded after use, keeping responses fast and complete even in long sessions
 
 ### 📄 PDF Export
 
@@ -849,6 +850,9 @@ applications:
     JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 17.+ } }'
     ADMIN_PIN: <your-admin-pin>
     PERMANENT_ADMIN_EMAILS: first.admin@your-company.com,second.admin@your-company.com
+    # Memory tuning — optional overrides (defaults shown)
+    # GP_AGENT_MAX_MESSAGES: 20          # messages kept per session window
+    # GP_AGENT_MAX_OUTPUT_TOKENS: 4096   # max tokens the model produces per response
     # Block storage kept as backup — no longer used by the app (data migrated to postgres).
     # Uncomment AGENT_DATA_DIR only if rolling back to file-based storage.
     # AGENT_DATA_DIR: /mnt/gp-data
@@ -1374,6 +1378,8 @@ No additional UAA-specific libraries are required. Spring Security's standard OA
 | Sessions lost after restage | Expected behaviour if app was in file mode before migration | Verify data was migrated to postgres; check `user_sessions` table has rows |
 | "400 Bad Request — at least one parts field must be non-empty" from Gemini | Gemini rejects `content: null` in stored chat history (e.g. after a tool-call-only AI turn) | Fixed in `MessageSanitizer.java` — patches all `AiMessage` entries with null/blank text to `" "` before deserialization |
 | Schema intelligence glossary/templates not matching | `business_glossary` or `query_templates` tables are empty | Tables are seeded by V4 migration on first startup; verify by querying the tables directly or running `cf logs` to check for Flyway migration output |
+| Response cuts off mid-sentence | Model hit its output token limit | Increase `GP_AGENT_MAX_OUTPUT_TOKENS` in `manifest.yml` (default: 4096) |
+| Response is very slow or never arrives | Context window overloaded with accumulated SQL results | Shorten the session with `/api/memory/clear` or reduce `GP_AGENT_MAX_MESSAGES` (default: 20) |
 
 ### Logs
 

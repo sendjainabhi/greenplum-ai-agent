@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
+import dev.langchain4j.data.message.UserMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -160,5 +162,62 @@ public class MessageSanitizer {
 
     private static boolean isNullOrBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    /**
+     * Strip injected schema blocks from UserMessages when a conversation turn completes.
+     *
+     * Schema is injected into the prompt on every request (so the LLM always has it), but we
+     * don't want it accumulating in stored conversation history. Stripping at turn-end means:
+     *   - The LLM sees schema in the current turn's prompt (correct answer)
+     *   - Stored history stays lean (no repeated 2000-char schema blocks)
+     *   - App restarts are safe — schema is re-injected from cache on next request
+     *
+     * We only strip when the final AiMessage (no tool calls) is stored — i.e., the turn is
+     * complete and we know the LLM has already used the schema to produce its response.
+     */
+    public static List<ChatMessage> stripSchemaAtTurnEnd(List<ChatMessage> messages) {
+        if (messages.isEmpty()) return messages;
+        ChatMessage last = messages.get(messages.size() - 1);
+        // Only strip at turn-end: final AI response (not a tool-call message)
+        if (!(last instanceof AiMessage ai) || ai.hasToolExecutionRequests()) return messages;
+
+        List<ChatMessage> result = new ArrayList<>(messages.size());
+        boolean anyStripped = false;
+        for (ChatMessage msg : messages) {
+            if (msg instanceof UserMessage um) {
+                try {
+                    String original = um.singleText();
+                    String stripped = stripSchemaBlock(original);
+                    if (!stripped.equals(original)) {
+                        result.add(UserMessage.from(stripped));
+                        anyStripped = true;
+                        continue;
+                    }
+                } catch (Exception ignored) {
+                    // multi-part content — leave as-is
+                }
+            }
+            result.add(msg);
+        }
+        if (anyStripped) log.debug("[SANITIZER] Stripped schema injection from stored user message(s)");
+        return anyStripped ? result : messages;
+    }
+
+    /**
+     * Remove the injected [DATABASE SCHEMA...] block from a user message text.
+     * The block starts with the marker and ends just before the next injection block (\n\n[)
+     * or at the end of the string. Safe to call when no schema block is present.
+     */
+    static String stripSchemaBlock(String text) {
+        if (text == null) return text;
+        final String MARKER = "\n\n[DATABASE SCHEMA — already loaded, do NOT call describe_tables:\n";
+        int start = text.indexOf(MARKER);
+        if (start < 0) return text;
+        int nextBlock = text.indexOf("\n\n[", start + MARKER.length());
+        if (nextBlock >= 0) {
+            return text.substring(0, start) + text.substring(nextBlock);
+        }
+        return text.substring(0, start).trim();
     }
 }

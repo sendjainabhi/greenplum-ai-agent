@@ -2,6 +2,7 @@ package com.gp.agent;
 
 import com.gp.agent.db.MessageSanitizer;
 import com.gp.agent.db.PostgresChatMemoryStore;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
@@ -91,14 +92,21 @@ public class AiConfig {
 
         @Override
         public void updateMessages(Object memoryId, List<ChatMessage> messages) {
-            cache.put(memoryId, new ArrayList<>(messages));
+            List<ChatMessage> toStore = MessageSanitizer.stripSchemaAtTurnEnd(messages);
+            cache.put(memoryId, new ArrayList<>(toStore));
             try {
                 File file = getMemoryFile(memoryId);
-                String json = ChatMessageSerializer.messagesToJson(messages);
+                String json = ChatMessageSerializer.messagesToJson(toStore);
                 Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
-                log.info("[MEMORY] Saved {} messages to {}", messages.size(), file.getName());
+                log.info("[MEMORY] Saved {} messages to {}", toStore.size(), file.getName());
                 cleanupOldMemoryFiles(memoryId);
+                // Invalidate cache after a complete turn so the next turn always reads fresh from file.
+                ChatMessage last = toStore.isEmpty() ? null : toStore.get(toStore.size() - 1);
+                if (last instanceof AiMessage ai && !ai.hasToolExecutionRequests()) {
+                    cache.remove(memoryId);
+                }
             } catch (Exception e) {
+                cache.remove(memoryId); // drop stale cache so next read falls back to file
                 log.error("[MEMORY] Failed to save memory for {}: {}", memoryId, e.getMessage());
             }
         }
