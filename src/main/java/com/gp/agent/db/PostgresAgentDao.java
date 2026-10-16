@@ -19,6 +19,7 @@ public class PostgresAgentDao implements AgentDao {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String ADMIN_ROLE = "ADMIN";
     private static final String KEY_GLOBAL_PROMPT = "global_prompt";
+    private static final String KEY_DATA_AS_OF    = "data_as_of";
 
     private final JdbcTemplate jdbc;
 
@@ -46,6 +47,26 @@ public class PostgresAgentDao implements AgentDao {
                 INSERT INTO app_config(key, value, updated_at) VALUES (?, ?, NOW())
                 ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                 """, KEY_GLOBAL_PROMPT, prompt == null ? "" : prompt);
+    }
+
+    @Override
+    public String loadDataAsOf() {
+        try {
+            List<String> rows = jdbc.queryForList(
+                    "SELECT value FROM app_config WHERE key = ?", String.class, KEY_DATA_AS_OF);
+            return rows.isEmpty() ? "" : rows.get(0).trim();
+        } catch (Exception e) {
+            log.warn("[DAO] Could not read data-as-of: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    @Override
+    public void saveDataAsOf(String label) {
+        jdbc.update("""
+                INSERT INTO app_config(key, value, updated_at) VALUES (?, ?, NOW())
+                ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                """, KEY_DATA_AS_OF, label == null ? "" : label.trim());
     }
 
     // --- Allowlist ---

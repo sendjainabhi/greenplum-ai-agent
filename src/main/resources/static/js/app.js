@@ -38,22 +38,12 @@ function stripLoneSurrogates(str) {
 }
 
 // =============================================================================
-// THEME  (dark / light — applied immediately to avoid flash)
+// THEME  (light only — dark mode removed)
 // =============================================================================
 
 (function () {
-    var saved = localStorage.getItem('gp_theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
+    document.documentElement.removeAttribute('data-theme');
 })();
-
-function applyThemeLabel() {
-    var btn = document.getElementById('themeToggleBtn');
-    if (!btn) return;
-    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    btn.textContent = isDark ? '☀️' : '🌙';
-    btn.title = isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode';
-    btn.dataset.tip = isDark ? 'Light Mode' : 'Dark Mode';
-}
 
 function togglePinVisibility() {
     var inp = document.getElementById('adminPinInput');
@@ -61,21 +51,6 @@ function togglePinVisibility() {
     inp.type = inp.type === 'password' ? 'text' : 'password';
 }
 
-function toggleTheme() {
-    var current = document.documentElement.getAttribute('data-theme') || 'light';
-    var next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('gp_theme', next);
-    applyThemeLabel();
-    // Persist to server so theme loads correctly in any browser/incognito session
-    if (CURRENT_USER_ID) {
-        fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: CURRENT_USER_ID, theme: next })
-        }).catch(function() {});
-    }
-}
 
 // =============================================================================
 // USER IDENTITY  (username chosen at PIN setup — survives browser cache clear)
@@ -88,7 +63,7 @@ let IS_PERMANENT_ADMIN = false;
 
 // --- SSO logout ---
 function logout() {
-    ['gp_user_id', 'gp_sessions', 'gp_current_session', 'gp_history', 'gp_config', 'gp_theme']
+    ['gp_user_id', 'gp_sessions', 'gp_current_session', 'gp_history', 'gp_config']
         .forEach(k => localStorage.removeItem(k));
     Object.keys(localStorage).filter(k => k.startsWith('gp_chat_ui_')).forEach(k => localStorage.removeItem(k));
     window.location.href = '/logout';
@@ -605,6 +580,8 @@ async function verifyAdminPin() {
         // Load global prompt in read-only mode
         const promptEl = document.getElementById('globalPromptText');
         promptEl.value = data.globalPrompt || '';
+        const dataAsOfEl = document.getElementById('dataAsOfInput');
+        if (dataAsOfEl) dataAsOfEl.value = data.dataAsOf || '';
         promptEl.readOnly = true;
         promptEl.style.opacity = '0.7';
         const editBtn = document.getElementById('promptEditBtn');
@@ -639,6 +616,49 @@ function editGlobalPrompt() {
     promptEl.focus();
     document.getElementById('promptEditBtn').style.display = 'none';
     document.getElementById('promptSaveBtn').style.display = 'inline-block';
+}
+
+async function loadDataAsOfBadge() {
+    try {
+        const res  = await fetch('/api/data-as-of');
+        const data = await res.json();
+        const label = (data.label || '').trim();
+        const note = document.getElementById('dataAsOfNote');
+        if (note) {
+            if (label) {
+                note.textContent = '* ' + label;
+                note.style.display = '';
+            } else {
+                note.style.display = 'none';
+            }
+        }
+    } catch (_) {}
+}
+
+async function saveDataAsOf() {
+    const label    = (document.getElementById('dataAsOfInput') || {}).value || '';
+    const resultEl = document.getElementById('dataAsOfResult');
+    if (resultEl) resultEl.style.display = 'none';
+
+    try {
+        const res  = await fetch('/api/admin/save-data-as-of', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinHash: adminPinHashInSession, label: label.trim() })
+        });
+        const data = await res.json();
+        if (resultEl) {
+            resultEl.className   = 'test-result ' + (data.success ? 'test-success' : 'test-error');
+            resultEl.textContent = data.success ? '✅ Saved.' : '❌ ' + (data.error || 'Save failed.');
+            resultEl.style.display = 'block';
+        }
+        if (data.success) loadDataAsOfBadge();
+    } catch (e) {
+        if (resultEl) {
+            resultEl.className   = 'test-result test-error';
+            resultEl.textContent = '❌ Could not reach server.';
+            resultEl.style.display = 'block';
+        }
+    }
 }
 
 async function saveGlobalPrompt() {
@@ -1150,7 +1170,6 @@ async function fetchAuthStatus() {
 }
 
 window.onload = async function () {
-    applyThemeLabel();
     try {
         const status = await fetchAuthStatus();
 
@@ -1201,6 +1220,7 @@ window.onload = async function () {
             if (adminBtn) adminBtn.style.display = '';
         }
 
+        loadDataAsOfBadge();
         bootApp();
     } catch (e) {
         console.error('[boot] Unexpected error:', e);
@@ -1289,12 +1309,6 @@ async function loadSettingsFromServer() {
         const data = await res.json();
         if (data.success && data.config) {
             localStorage.setItem('gp_config', JSON.stringify({ data: data.config }));
-            // Apply theme from server so it's consistent across all browsers/sessions
-            if (data.config.theme) {
-                localStorage.setItem('gp_theme', data.config.theme);
-                document.documentElement.setAttribute('data-theme', data.config.theme);
-                applyThemeLabel();
-            }
         }
     } catch (e) {
         // Server unreachable — fall back to whatever is already in localStorage
@@ -1828,13 +1842,7 @@ async function exportSinglePDF(wrapperId, btnElement) {
     btnElement.innerHTML = '⏳ Generating...';
     btnElement.disabled  = true;
 
-    let viewport   = null;
-    let savedTheme = null;
-
-    const restoreTheme = (theme) => {
-        if (theme) document.documentElement.setAttribute('data-theme', theme);
-        else document.documentElement.removeAttribute('data-theme');
-    };
+    let viewport = null;
 
     try {
         const aiWrapper = document.getElementById(wrapperId);
@@ -1875,49 +1883,46 @@ async function exportSinglePDF(wrapperId, btnElement) {
         const nowStr   = new Date().toLocaleString();
 
         // Build the PDF HTML — all colors are hard-coded (no CSS variables)
+        const pdfLogoB64 = 'data:image/png;base64,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';
         const pdfHtml = `
-<div style="font-family:Arial,sans-serif;font-size:13px;color:#1a2e1f;padding:12px 16px;background:#ffffff;width:100%;">
+<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f2937;padding:12px 16px;background:#ffffff;width:100%;">
 
-  <div style="border-bottom:2px solid #2d6a4f;padding-bottom:12px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="30" height="30">
-      <circle cx="50" cy="50" r="47" fill="none" stroke="#78be20" stroke-width="9"/>
-      <circle cx="50" cy="50" r="35" fill="#78be20"/>
-      <path d="M 46 16 C 26 16 14 32 14 50 C 14 68 27 83 46 83 C 58 83 67 76 69 65 L 50 50 Z" fill="white"/>
-    </svg>
+  <div style="border-bottom:2px solid #dde1e7;padding-bottom:12px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
+    <img src="${pdfLogoB64}" width="34" height="34" style="flex-shrink:0;" />
     <div>
-      <div style="font-size:19px;font-weight:bold;color:#2d6a4f;line-height:1.2;">Greenplum AI Analytics Report</div>
-      <div style="font-size:11px;color:#4b7a5e;margin-top:3px;">Generated: ${nowStr}</div>
+      <div style="font-size:19px;font-weight:bold;color:#1565c0;line-height:1.2;">VMware Tanzu GM Dashboard AI Agent Report</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:3px;">Generated: ${nowStr}</div>
     </div>
   </div>
 
-  <div style="background:#f0fdf4;border-left:4px solid #2d6a4f;padding:10px 14px;margin-bottom:20px;border-radius:0 4px 4px 0;">
-    <div style="font-size:10px;font-weight:700;color:#4b7a5e;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px;">Query</div>
-    <div style="font-size:13px;color:#1a2e1f;line-height:1.5;">${queryText}</div>
+  <div style="background:#f0f2f5;border-left:4px solid #1565c0;padding:10px 14px;margin-bottom:20px;border-radius:0 4px 4px 0;">
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px;">Query</div>
+    <div style="font-size:13px;color:#1f2937;line-height:1.5;">${queryText}</div>
   </div>
 
   <style>
     *{box-sizing:border-box;}
-    p,li,span,strong,em{color:#1a2e1f!important;}
-    a{color:#2d6a4f!important;}
-    h1,h2,h3,h4,h5,h6{color:#2d6a4f!important;margin:14px 0 6px;}
-    pre{background:#f5f9f6!important;border:1px solid #bbf7d0!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;}
-    code{color:#0f4c2a!important;background:#f5f9f6!important;font-family:monospace!important;font-size:12px!important;}
+    p,li,span,strong,em{color:#1f2937!important;}
+    a{color:#1565c0!important;}
+    h1,h2,h3,h4,h5,h6{color:#1565c0!important;margin:14px 0 6px;}
+    pre{background:#f6f8fa!important;border:1px solid #dde1e7!important;border-radius:4px!important;padding:12px!important;white-space:pre-wrap!important;word-break:break-all!important;margin:10px 0!important;}
+    code{color:#24292e!important;background:#f6f8fa!important;font-family:monospace!important;font-size:12px!important;}
     table{border-collapse:collapse!important;width:100%!important;margin:12px 0!important;font-size:12px!important;}
-    th{background:#2d6a4f!important;color:#ffffff!important;padding:9px 11px!important;text-align:left!important;}
-    td{padding:7px 11px!important;border:1px solid #bbf7d0!important;color:#1a2e1f!important;background:#ffffff!important;}
-    tr:nth-child(even) td{background:#f0fdf4!important;}
+    th{background:#1565c0!important;color:#ffffff!important;padding:9px 11px!important;text-align:left!important;}
+    td{padding:7px 11px!important;border:1px solid #dde1e7!important;color:#1f2937!important;background:#ffffff!important;}
+    tr:nth-child(even) td{background:#f7f8fa!important;}
     .table-responsive{overflow:visible!important;}
     .copy-btn,button{display:none!important;}
-    blockquote{border-left:4px solid #86efac!important;background:#f0fdf4!important;padding:8px 14px!important;margin:10px 0!important;}
+    blockquote{border-left:4px solid #c9cdd4!important;background:#f0f2f5!important;padding:8px 14px!important;margin:10px 0!important;}
     img{max-width:100%!important;height:auto!important;}
   </style>
 
-  <div style="line-height:1.75;color:#1a2e1f;">
+  <div style="line-height:1.75;color:#1f2937;">
     ${aiNode.innerHTML}
   </div>
 
-  <div style="border-top:1px solid #bbf7d0;margin-top:28px;padding-top:8px;font-size:10px;color:#4b7a5e;text-align:center;">
-    Greenplum AI Analytics Agent &mdash; Confidential
+  <div style="border-top:1px solid #dde1e7;margin-top:28px;padding-top:8px;font-size:10px;color:#6b7280;text-align:center;">
+    VMware Tanzu GM Dashboard AI Agent &mdash; Confidential
   </div>
 </div>`;
 
@@ -1936,9 +1941,6 @@ async function exportSinglePDF(wrapperId, btnElement) {
         inner.innerHTML = pdfHtml;
         viewport.appendChild(inner);
         document.body.appendChild(viewport);
-
-        savedTheme = document.documentElement.getAttribute('data-theme');
-        document.documentElement.removeAttribute('data-theme');
 
         // Let the browser lay out the content before measuring
         await new Promise(r => setTimeout(r, 120));
@@ -1965,14 +1967,12 @@ async function exportSinglePDF(wrapperId, btnElement) {
 
         document.body.removeChild(viewport);
         viewport = null;
-        restoreTheme(savedTheme);
         pdf.save(filename);
         btnElement.innerHTML = '✅ Downloaded!';
         setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2000);
 
     } catch (err) {
         if (viewport && document.body.contains(viewport)) document.body.removeChild(viewport);
-        restoreTheme(savedTheme);
         console.error('[PDF] Generation failed:', err);
         btnElement.innerHTML = '❌ Failed — try again';
         setTimeout(() => { btnElement.innerHTML = originalText; btnElement.disabled = false; }, 2500);

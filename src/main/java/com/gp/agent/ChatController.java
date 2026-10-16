@@ -556,8 +556,9 @@ public class ChatController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
         }
         String globalPrompt = agentDao.loadGlobalPrompt();
+        String dataAsOf     = agentDao.loadDataAsOf();
         log.info("[ADMIN] Admin authenticated");
-        return ResponseEntity.ok(Map.of("success", true, "globalPrompt", globalPrompt));
+        return ResponseEntity.ok(Map.of("success", true, "globalPrompt", globalPrompt, "dataAsOf", dataAsOf));
     }
 
     @PostMapping("/admin/save")
@@ -575,6 +576,28 @@ public class ChatController {
             log.error("[ADMIN] Save failed: {}", e.getMessage());
             return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
         }
+    }
+
+    @PostMapping("/admin/save-data-as-of")
+    ResponseEntity<Map<String, Object>> adminSaveDataAsOf(@RequestBody Map<String, String> request) {
+        String pinHash = request.getOrDefault("pinHash", "").trim();
+        String label   = request.getOrDefault("label",   "").trim();
+        if (!adminPinHash.equals(pinHash)) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Incorrect admin PIN."));
+        }
+        try {
+            agentDao.saveDataAsOf(label);
+            log.info("[ADMIN] Data-as-of label updated: '{}'", label);
+            return ResponseEntity.ok(Map.of("success", true, "label", label));
+        } catch (Exception e) {
+            log.error("[ADMIN] Save data-as-of failed: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/data-as-of")
+    ResponseEntity<Map<String, Object>> getDataAsOf() {
+        return ResponseEntity.ok(Map.of("label", agentDao.loadDataAsOf()));
     }
 
     // -------------------------------------------------------------------------

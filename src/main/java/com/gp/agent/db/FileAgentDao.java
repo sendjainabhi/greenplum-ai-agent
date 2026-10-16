@@ -45,6 +45,28 @@ public class FileAgentDao implements AgentDao {
         }
     }
 
+    @Override
+    public String loadDataAsOf() {
+        try {
+            File f = dataFile("data-as-of.txt");
+            return f.exists() ? Files.readString(f.toPath(), StandardCharsets.UTF_8).trim() : "";
+        } catch (Exception e) {
+            log.warn("[DAO] Could not read data-as-of: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    @Override
+    public void saveDataAsOf(String label) {
+        try {
+            Files.writeString(dataFile("data-as-of.txt").toPath(),
+                    label == null ? "" : label.trim(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.error("[DAO] Could not save data-as-of: {}", e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
     // --- Allowlist ---
 
     @Override

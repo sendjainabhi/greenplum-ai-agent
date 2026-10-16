@@ -1,8 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <!-- Outer ring -->
-  <circle cx="50" cy="50" r="47" fill="none" stroke="#78be20" stroke-width="9"/>
-  <!-- Inner green filled circle -->
-  <circle cx="50" cy="50" r="35" fill="#78be20"/>
-  <!-- White teardrop cutout creating the stylized G negative space -->
-  <path d="M 46 16 C 26 16 14 32 14 50 C 14 68 27 83 46 83 C 58 83 67 76 69 65 L 50 50 Z" fill="white"/>
+  <!-- Tanzu hexagonal ring — 6 segments, pointy-top orientation -->
+  <!-- Top: bright blue -->
+  <polygon points="50,5 88,27 71,38 50,26" fill="#00AEEF" stroke="white" stroke-width="1.5"/>
+  <!-- Top-right: medium blue -->
+  <polygon points="88,27 88,73 71,62 71,38" fill="#005BAB" stroke="white" stroke-width="1.5"/>
+  <!-- Bottom-right: mid green -->
+  <polygon points="88,73 50,95 50,74 71,62" fill="#52A546" stroke="white" stroke-width="1.5"/>
+  <!-- Bottom: bright green -->
+  <polygon points="50,95 12,73 29,62 50,74" fill="#78BE20" stroke="white" stroke-width="1.5"/>
+  <!-- Bottom-left: mid green -->
+  <polygon points="12,73 12,27 29,38 29,62" fill="#52A546" stroke="white" stroke-width="1.5"/>
+  <!-- Top-left: medium blue -->
+  <polygon points="12,27 50,5 50,26 29,38" fill="#005BAB" stroke="white" stroke-width="1.5"/>
 </svg>

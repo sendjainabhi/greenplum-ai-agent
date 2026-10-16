@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Access Denied — Greenplum AI Agent</title>
+    <title>Access Denied — GM Dashboard AI Agent</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -53,7 +53,7 @@
         }
         a.btn {
             display: inline-block;
-            background: #2d6a4f;
+            background: #1565c0;
             color: #fff;
             border-radius: 7px;
             padding: 10px 28px;
@@ -62,7 +62,7 @@
             text-decoration: none;
             transition: background 0.15s;
         }
-        a.btn:hover { background: #1b4332; }
+        a.btn:hover { background: #0d47a1; }
         .footer {
             margin-top: 28px;
             font-size: 0.78em;
@@ -72,22 +72,18 @@
 </head>
 <body>
 <div class="card">
-    <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="47" fill="none" stroke="#78be20" stroke-width="9"/>
-        <circle cx="50" cy="50" r="35" fill="#78be20"/>
-        <path d="M 46 16 C 26 16 14 32 14 50 C 14 68 27 83 46 83 C 58 83 67 76 69 65 L 50 50 Z" fill="white"/>
-    </svg>
+    <img src="/images/logo.png" alt="VMware Tanzu" class="logo" />
     <div class="badge">Access Denied</div>
     <h1>You are not authorized to use this application.</h1>
     <p>
         Your Broadcom account was authenticated successfully, but you have not been
-        granted access to the Greenplum AI Agent.
+        granted access to the GM Dashboard AI Agent.
     </p>
     <p>
         Contact your administrator to request access. Once added, sign in again.
     </p>
     <a class="btn" href="/oauth2/authorization/sso">Try a Different Account</a>
-    <div class="footer">Greenplum AI Analytics Agent &mdash; Broadcom Internal</div>
+    <div class="footer">GM Dashboard AI Agent &mdash; Broadcom Internal</div>
 </div>
 </body>
 </html>

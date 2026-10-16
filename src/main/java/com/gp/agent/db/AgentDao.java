@@ -14,6 +14,9 @@ public interface AgentDao {
     String loadGlobalPrompt();
     void saveGlobalPrompt(String prompt);
 
+    String loadDataAsOf();
+    void saveDataAsOf(String label);
+
     // --- Access control ---
     /** Returns raw allowlist text (newline-separated emails, may include # comments). */
     String loadAllowlist();

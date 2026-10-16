@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Greenplum Analytics & Reporting</title>
+    <title>VMware Tanzu GM Dashboard AI Agent</title>
 
     <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -11,11 +11,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 
-    <link rel="stylesheet" href="/css/style.css?v=70">
+    <link rel="stylesheet" href="/css/style.css?v=76">
 </head>
 <body>
 
@@ -35,8 +35,8 @@
         <div class="header">
             <!-- Left: logo + title + status dots -->
             <div style="display:flex; align-items:center; gap:12px; min-width:0;">
-                <img src="/images/logo.svg" alt="Greenplum" style="width:30px; height:30px; flex-shrink:0;" />
-                <span style="font-size:1em; letter-spacing:0.01em; white-space:nowrap;">Greenplum <span style="font-weight:400; opacity:0.85;">AI Analytics</span></span>
+                <img src="/images/logo.png" alt="VMware Tanzu" style="width:32px; height:32px; flex-shrink:0; mix-blend-mode:multiply;" />
+                <span style="font-size:0.82em; letter-spacing:0.01em; white-space:nowrap;">VMware Tanzu GM Dashboard <span style="font-weight:400; opacity:0.85;">AI Agent</span></span>
                 <div class="status-container" style="font-size:0.72em;">
                     <span id="modelIndicator" class="model-indicator">
                         <span id="headerStatusDot" class="status-dot status-unknown"></span>
@@ -44,7 +44,7 @@
                     </span>
                     <span id="mcpStatusContainer"></span>
                 </div>
-                <span id="headerModeBadge" style="display:none; font-size:0.68em; padding:2px 8px; border-radius:10px; background:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); font-weight:500; white-space:nowrap;"></span>
+                <span id="headerModeBadge" style="display:none; font-size:0.68em; padding:2px 8px; border-radius:10px; background:var(--ai-bubble-bg); color:var(--primary-color); font-weight:500; white-space:nowrap;"></span>
             </div>
             <!-- Right: user initials + icon action buttons -->
             <div class="header-actions">
@@ -52,7 +52,7 @@
                     <div class="hdr-avatar" id="hdrAvatar" title="" onclick="openUserPrefs()" data-tip="My Preferences">?</div>
                 </div>
                 <span id="userEmailDisplay" style="display:none;"></span>
-                <button class="hdr-btn" id="themeToggleBtn" onclick="toggleTheme()" data-tip="Toggle Mode">🌙</button>
+                <a href="https://datastudio.google.com/reporting/c1a793a3-d7c9-48c3-a2fc-de5f2d4ceb48/page/p_rgrpjdmzid" target="_blank" rel="noopener" class="hdr-btn" data-tip="GM Dashboard" style="text-decoration:none;"><svg width="17" height="15" viewBox="0 0 22 19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="20" height="13" rx="1.5"/><line x1="11" y1="14" x2="11" y2="18"/><line x1="7" y1="18" x2="15" y2="18"/><line x1="5" y1="10" x2="5" y2="8"/><line x1="8.5" y1="10" x2="8.5" y2="6"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="15.5" y1="10" x2="15.5" y2="7"/><line x1="19" y1="10" x2="19" y2="5"/></svg></a>
                 <button class="hdr-btn" id="settingsBtn" onclick="openSettings()" data-tip="Settings">⚙️</button>
                 <button class="hdr-btn" id="adminPanelBtn" onclick="openAdminModal()" data-tip="Admin Panel" style="display:none;">🔐</button>
                 <button class="hdr-btn" onclick="deleteAllData()" data-tip="Clear Data">🗑️</button>
@@ -72,6 +72,7 @@
             <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send</button>
             <button class="send-btn" id="cancelBtn" onclick="cancelRequest()" style="display: none; background: #ef4444; border-color: #ef4444;">Cancel</button>
         </div>
+        <div id="dataAsOfNote" style="display:none; text-align:right; font-size:0.75em; color:var(--text-color); padding:2px 16px 6px; font-weight:600;"></div>
     </div>
 </div>
 
@@ -201,6 +202,18 @@
 
             <!-- Panel: Global Prompt -->
             <div id="adminPanelPrompt">
+                <!-- Data as of label -->
+                <div class="form-group" style="margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <label style="margin:0;">Data As Of</label>
+                        <button class="btn-save" onclick="saveDataAsOf()" style="font-size:0.8em; padding:3px 10px;">Save</button>
+                    </div>
+                    <input type="text" id="dataAsOfInput"
+                           placeholder="e.g. Data as of EOQ FY26 Q3 (2026-08-02)"
+                           style="padding:8px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.9em; width:100%; box-sizing:border-box;" />
+                    <div id="dataAsOfResult" class="test-result" style="display:none; margin-top:6px;"></div>
+                </div>
+
                 <p style="font-size:0.9em; color:#64748b; margin-bottom:12px;">
                     These instructions are appended to <strong>every chat request for every user</strong>.
                     Use role-definition blocks at the top to enforce data boundaries per role.
